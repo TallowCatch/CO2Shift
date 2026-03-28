@@ -10,7 +10,7 @@ os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 from .config import load_config
 from .pipeline import evaluate, generate, run_all, train, validate_field_setup
-from .sleipner import export_sleipner_storage_interval_mask
+from .sleipner import export_sleipner_plume_support_traces, export_sleipner_storage_interval_mask
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -23,6 +23,7 @@ def _build_parser() -> argparse.ArgumentParser:
         ("run-all", "Run generation, training, and evaluation"),
         ("validate-field", "Validate a real-data field manifest or field input config"),
         ("build-sleipner-mask", "Build a storage-interval mask from Sleipner benchmark surfaces"),
+        ("build-sleipner-plume-support", "Build a 2010 plume-support trace mask from Sleipner benchmark polygons"),
     ):
         subparser = subparsers.add_parser(command, help=help_text)
         subparser.add_argument("--config", required=True, help="Path to YAML config file")
@@ -67,6 +68,30 @@ def main() -> None:
             segy_path=segy_path,
             inline_number=inline_number,
             output_mask_path=output_mask_path,
+        )
+    elif args.command == "build-sleipner-plume-support":
+        field_cfg = config.get("field", {})
+        plume_boundaries_root = field_cfg.get("plume_boundaries_root", "")
+        segy_path = field_cfg.get("segy_path", "")
+        inline_number = int(field_cfg.get("inline_number", 0))
+        output_support_path = field_cfg.get("output_plume_support_path", "")
+        missing = [
+            name
+            for name, value in (
+                ("field.plume_boundaries_root", plume_boundaries_root),
+                ("field.segy_path", segy_path),
+                ("field.inline_number", inline_number),
+                ("field.output_plume_support_path", output_support_path),
+            )
+            if not value
+        ]
+        if missing:
+            raise ValueError(f"Missing config values for build-sleipner-plume-support: {missing}")
+        result = export_sleipner_plume_support_traces(
+            plume_boundaries_root=plume_boundaries_root,
+            segy_path=segy_path,
+            inline_number=inline_number,
+            output_support_path=output_support_path,
         )
     else:
         raise ValueError(f"Unsupported command: {args.command}")

@@ -283,6 +283,7 @@ def predict_probabilities(
     device: torch.device,
     temperature: float = 1.0,
     mc_passes: int = 1,
+    seed: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     tensor_inputs = torch.from_numpy(inputs.astype(np.float32))
     loader = DataLoader(tensor_inputs, batch_size=4, shuffle=False)
@@ -291,6 +292,8 @@ def predict_probabilities(
     runtime_start = time.perf_counter()
 
     if mc_passes <= 1:
+        if seed is not None:
+            ensure_torch_seed(seed)
         model.eval()
         with torch.no_grad():
             for batch in loader:
@@ -302,7 +305,9 @@ def predict_probabilities(
         uncertainty = np.zeros_like(probs, dtype=np.float32)
     else:
         probability_samples: list[np.ndarray] = []
-        for _ in range(mc_passes):
+        for pass_index in range(mc_passes):
+            if seed is not None:
+                ensure_torch_seed(seed + pass_index)
             model.eval()
             model.apply(_enable_dropout_in_eval)
             pass_logits: list[np.ndarray] = []
@@ -375,6 +380,30 @@ def _binary_iou(first: np.ndarray, second: np.ndarray) -> float:
         return float("nan")
     intersection = np.sum(first & second)
     return float(intersection / union)
+
+
+def _trace_support_metrics(
+    binary_map: np.ndarray,
+    support_traces: np.ndarray | None,
+) -> dict[str, Any]:
+    if support_traces is None:
+        return {}
+
+    predicted_trace_mask = np.any(binary_map.astype(bool), axis=0)
+    support_trace_mask = support_traces.astype(bool)
+    predicted_count = int(np.sum(predicted_trace_mask))
+    support_count = int(np.sum(support_trace_mask))
+    outside_count = int(np.sum(predicted_trace_mask & ~support_trace_mask))
+    inside_count = int(np.sum(predicted_trace_mask & support_trace_mask))
+
+    return {
+        "predicted_trace_fraction": float(np.mean(predicted_trace_mask)),
+        "support_trace_fraction_2010": float(np.mean(support_trace_mask)),
+        "trace_fraction_outside_2010_support": float(outside_count / max(predicted_count, 1)),
+        "trace_fraction_inside_2010_support": float(inside_count / max(predicted_count, 1)),
+        "trace_iou_with_2010_support": _binary_iou(predicted_trace_mask, support_trace_mask),
+        "trace_support_coverage_vs_2010": float(inside_count / max(support_count, 1)),
+    }
 
 
 def _collect_field_region_values(
@@ -718,6 +747,7 @@ def evaluate(config: dict[str, Any]) -> dict[str, Any]:
             device,
             temperature=plain_artifact["temperature"],
             mc_passes=1,
+            seed=config["seed"] + 100,
         )
         hybrid_probs, hybrid_uncertainty, hybrid_runtime = predict_probabilities(
             hybrid_artifact["model"],
@@ -725,6 +755,7 @@ def evaluate(config: dict[str, Any]) -> dict[str, Any]:
             device,
             temperature=hybrid_artifact["temperature"],
             mc_passes=config["training"]["mc_dropout_passes"],
+            seed=config["seed"] + 200,
         )
 
         split_metrics = {
@@ -757,6 +788,21 @@ def evaluate(config: dict[str, Any]) -> dict[str, Any]:
 
     field_pairs = load_field_pairs(config, split_arrays=bundle.ood)
     if field_pairs:
+        plume_support_path = config.get("field", {}).get("plume_support_path", "")
+        plume_support_traces = None
+        if plume_support_path:
+            support_array = np.load(plume_support_path).astype(np.float32)
+            if support_array.ndim != 1:
+                raise ValueError(
+                    f"field.plume_support_path must point to a 1D trace-support array; got shape {support_array.shape}."
+                )
+            if support_array.shape[0] != field_pairs[0].baseline.shape[1]:
+                raise ValueError(
+                    "field.plume_support_path length does not match the number of traces in the field sections: "
+                    f"{support_array.shape[0]} vs {field_pairs[0].baseline.shape[1]}."
+                )
+            plume_support_traces = support_array > 0.5
+
         field_outputs: list[dict[str, Any]] = []
         for field_pair in field_pairs:
             field_plain_inputs = build_plain_channels(field_pair.baseline, field_pair.monitor)[None, ...]
@@ -767,6 +813,7 @@ def evaluate(config: dict[str, Any]) -> dict[str, Any]:
                 device,
                 temperature=plain_artifact["temperature"],
                 mc_passes=1,
+                seed=config["seed"] + 300,
             )
             hybrid_probs, hybrid_uncertainty, _ = predict_probabilities(
                 hybrid_artifact["model"],
@@ -774,6 +821,7 @@ def evaluate(config: dict[str, Any]) -> dict[str, Any]:
                 device,
                 temperature=hybrid_artifact["temperature"],
                 mc_passes=config["training"]["mc_dropout_passes"],
+                seed=config["seed"] + 400,
             )
             field_outputs.append(
                 {
@@ -821,11 +869,13 @@ def evaluate(config: dict[str, Any]) -> dict[str, Any]:
                 hybrid_uncertainty,
                 field_pair.reservoir_mask,
             )
+            support_metrics = _trace_support_metrics(constrained_binary, plume_support_traces)
             pair_results[field_pair.name] = {
                 "plain_ml": _evaluate_field_prediction(plain_probs, plain_uncertainty, field_pair.reservoir_mask),
                 "hybrid_ml": hybrid_metrics,
                 "hybrid_ml_constrained": {
                     **constrained_metrics,
+                    **support_metrics,
                     "constraint_metadata": constraint_metadata,
                 },
             }
@@ -899,6 +949,11 @@ def evaluate(config: dict[str, Any]) -> dict[str, Any]:
                 "constrained_pairwise_iou": pairwise_iou,
                 "constrained_area_non_decreasing": all(delta >= 0.0 for delta in area_deltas.values()),
             }
+        if plume_support_traces is not None:
+            results["field"]["support_note"] = (
+                "2010 plume-boundary support is used as a later-time structural envelope, not as exact ground truth "
+                "for earlier vintages."
+            )
 
     summary_sections = {
         "Overview": {

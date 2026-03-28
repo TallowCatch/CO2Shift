@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from matplotlib.path import Path as MatplotlibPath
 from scipy.interpolate import RegularGridInterpolator
 
 
@@ -172,6 +173,100 @@ def export_sleipner_storage_interval_mask(
     metadata_payload = {
         **result["metadata"],
         "output_mask_path": str(output_mask_path),
+        "metadata_path": str(metadata_path),
+    }
+    metadata_path.write_text(json.dumps(metadata_payload, indent=2), encoding="utf-8")
+    return metadata_payload
+
+
+def _load_plume_segments(path: str | Path) -> dict[int, np.ndarray]:
+    segments: dict[int, list[tuple[float, float]]] = {}
+    for line in Path(path).read_text(encoding="utf-8", errors="ignore").splitlines():
+        stripped = line.strip()
+        if (
+            not stripped
+            or stripped.startswith("!")
+            or stripped.startswith("@")
+            or stripped.startswith("X ")
+            or stripped.startswith("Y ")
+            or stripped.startswith("Z ")
+            or stripped.startswith("SEG")
+        ):
+            continue
+        parts = stripped.split()
+        if len(parts) < 4:
+            continue
+        x_coord, y_coord, _z_value, segment_id = float(parts[0]), float(parts[1]), float(parts[2]), int(parts[3])
+        segments.setdefault(segment_id, []).append((x_coord, y_coord))
+    return {segment_id: np.asarray(points, dtype=np.float32) for segment_id, points in segments.items()}
+
+
+def build_sleipner_plume_support_traces(
+    plume_boundaries_root: str | Path,
+    segy_path: str | Path,
+    inline_number: int,
+) -> dict[str, Any]:
+    plume_boundaries_root = Path(plume_boundaries_root)
+    layer_paths = [plume_boundaries_root / f"L{index}" for index in range(1, 10)]
+    missing = [str(path) for path in layer_paths if not path.exists()]
+    if missing:
+        raise FileNotFoundError(f"Missing plume-boundary files needed for support export: {missing}")
+
+    xlines, trace_x, trace_y, _sample_axis = _load_inline_geometry(segy_path, inline_number)
+    trace_xy = np.stack([trace_x, trace_y], axis=1)
+
+    layer_support: dict[str, np.ndarray] = {}
+    union_support = np.zeros(trace_xy.shape[0], dtype=bool)
+    for layer_index, layer_path in enumerate(layer_paths, start=1):
+        support = np.zeros(trace_xy.shape[0], dtype=bool)
+        for polygon in _load_plume_segments(layer_path).values():
+            if polygon.shape[0] < 3:
+                continue
+            if not np.allclose(polygon[0], polygon[-1]):
+                polygon = np.vstack([polygon, polygon[0]])
+            support |= MatplotlibPath(polygon).contains_points(trace_xy, radius=1e-6)
+        layer_name = f"L{layer_index}"
+        layer_support[layer_name] = support
+        union_support |= support
+
+    metadata = {
+        "inline_number": int(inline_number),
+        "num_traces": int(trace_xy.shape[0]),
+        "support_trace_fraction": float(np.mean(union_support)),
+        "support_trace_count": int(np.sum(union_support)),
+        "xline_min": int(xlines.min()),
+        "xline_max": int(xlines.max()),
+        "plume_boundaries_root": str(plume_boundaries_root),
+        "segy_path": str(segy_path),
+        "layer_trace_counts": {layer: int(np.sum(values)) for layer, values in layer_support.items()},
+        "support_vintage_note": "Benchmark plume boundaries are provided for 2010 on CO2DataShare.",
+    }
+
+    return {
+        "union_support_traces": union_support.astype(np.float32),
+        "xlines": xlines.astype(np.int32),
+        "trace_x": trace_x.astype(np.float32),
+        "trace_y": trace_y.astype(np.float32),
+        "layer_support_traces": {layer: values.astype(np.float32) for layer, values in layer_support.items()},
+        "metadata": metadata,
+    }
+
+
+def export_sleipner_plume_support_traces(
+    plume_boundaries_root: str | Path,
+    segy_path: str | Path,
+    inline_number: int,
+    output_support_path: str | Path,
+) -> dict[str, Any]:
+    result = build_sleipner_plume_support_traces(plume_boundaries_root, segy_path, inline_number)
+    output_support_path = Path(output_support_path)
+    output_support_path.parent.mkdir(parents=True, exist_ok=True)
+    np.save(output_support_path, result["union_support_traces"].astype(np.float32))
+
+    metadata_path = output_support_path.with_suffix(".metadata.json")
+    metadata_payload = {
+        **result["metadata"],
+        "output_support_path": str(output_support_path),
         "metadata_path": str(metadata_path),
     }
     metadata_path.write_text(json.dumps(metadata_payload, indent=2), encoding="utf-8")

@@ -54,9 +54,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "path": "",
         "manifest_path": "",
         "benchmark_root": "",
+        "plume_boundaries_root": "",
         "segy_path": "",
         "inline_number": 0,
         "output_mask_path": "",
+        "output_plume_support_path": "",
+        "plume_support_path": "",
         "postprocess": {
             "enabled": False,
             "threshold_mode": "fixed",

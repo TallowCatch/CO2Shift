@@ -7,9 +7,12 @@ field:
   path: ""
   manifest_path: examples/sleipner_manifest.real.json
   benchmark_root: /tmp/sleipner_benchmark/extract/velocities_trends_surfaces/data
+  plume_boundaries_root: /tmp/sleipner_benchmark/extract/Sleipner_Plumes_Boundaries/data
   segy_path: examples/exports/raw/94p07mid.sgy
   inline_number: 1840
   output_mask_path: examples/exports/sleipner_storage_interval_mask.npy
+  output_plume_support_path: examples/exports/sleipner_2010_plume_support_traces.npy
+  plume_support_path: examples/exports/sleipner_2010_plume_support_traces.npy
   postprocess:
     enabled: true
     threshold_mode: quantile
