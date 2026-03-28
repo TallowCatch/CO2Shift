@@ -27,6 +27,9 @@ training:
   weight_decay: 0.0001
   mc_dropout_passes: 10
   device: cpu
+  use_hybrid_augmentation: true
+  use_reservoir_weighting: true
+  outside_reservoir_weight: 0.35
 
 evaluation:
   abstain_quantiles: [0.7, 0.8, 0.9]
@@ -37,6 +40,7 @@ field:
   enabled: true
   mode: pseudo_sleipner
   path: ""
+  manifest_path: ""
 
 report:
   title: "Reliable 4D Change Maps for CCS Monitoring"

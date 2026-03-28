@@ -17,6 +17,7 @@ Path(os.environ["MPLCONFIGDIR"]).mkdir(parents=True, exist_ok=True)
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from scipy import ndimage
 from torch.utils.data import DataLoader, Dataset
 
 from .baselines import (
@@ -26,7 +27,7 @@ from .baselines import (
     score_impedance_difference,
 )
 from .calibration import apply_temperature, fit_temperature, monte_carlo_summary
-from .data import FieldPair, generate_synthetic_benchmark, load_field_pair, load_split
+from .data import FieldPair, generate_synthetic_benchmark, load_field_pairs, load_split, summarize_field_pairs
 from .features import build_hybrid_channels, build_plain_channels
 from .metrics import (
     centroid_error,
@@ -52,15 +53,53 @@ class DatasetBundle:
 
 
 class MonitoringDataset(Dataset):
-    def __init__(self, inputs: np.ndarray, targets: np.ndarray) -> None:
-        self.inputs = torch.from_numpy(inputs.astype(np.float32))
-        self.targets = torch.from_numpy(targets[:, None, :, :].astype(np.float32))
+    def __init__(
+        self,
+        baselines: np.ndarray,
+        monitors: np.ndarray,
+        targets: np.ndarray,
+        reservoir_masks: np.ndarray,
+        *,
+        hybrid: bool,
+        augment_cfg: dict[str, Any] | None = None,
+        use_reservoir_weighting: bool = False,
+        outside_reservoir_weight: float = 0.35,
+        seed: int = 0,
+    ) -> None:
+        self.baselines = baselines.astype(np.float32)
+        self.monitors = monitors.astype(np.float32)
+        self.targets = targets.astype(np.float32)
+        self.reservoir_masks = reservoir_masks.astype(np.float32)
+        self.hybrid = hybrid
+        self.augment_cfg = augment_cfg
+        self.use_reservoir_weighting = use_reservoir_weighting
+        self.outside_reservoir_weight = float(outside_reservoir_weight)
+        self.rng = np.random.default_rng(seed)
 
     def __len__(self) -> int:
-        return int(self.inputs.shape[0])
+        return int(self.baselines.shape[0])
 
-    def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
-        return self.inputs[index], self.targets[index]
+    def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        baseline = self.baselines[index].copy()
+        monitor = self.monitors[index].copy()
+        target = self.targets[index]
+        reservoir_mask = self.reservoir_masks[index]
+
+        if self.augment_cfg is not None:
+            baseline, monitor = _apply_training_augmentation(baseline, monitor, self.augment_cfg, self.rng)
+
+        builder = build_hybrid_channels if self.hybrid else build_plain_channels
+        features = builder(baseline, monitor)
+
+        weights = np.ones_like(target, dtype=np.float32)
+        if self.use_reservoir_weighting:
+            weights = np.where(reservoir_mask > 0.5, 1.0, self.outside_reservoir_weight).astype(np.float32)
+
+        return (
+            torch.from_numpy(features.astype(np.float32)),
+            torch.from_numpy(target[None, :, :].astype(np.float32)),
+            torch.from_numpy(weights[None, :, :].astype(np.float32)),
+        )
 
 
 def _to_device(tensor: torch.Tensor, device: torch.device) -> torch.Tensor:
@@ -77,6 +116,49 @@ def _build_inputs(split_arrays: dict[str, np.ndarray], hybrid: bool) -> tuple[np
     return inputs, targets
 
 
+def _apply_training_augmentation(
+    baseline: np.ndarray,
+    monitor: np.ndarray,
+    synthetic_cfg: dict[str, Any],
+    rng: np.random.Generator,
+) -> tuple[np.ndarray, np.ndarray]:
+    augmented_baseline = baseline.copy()
+    augmented_monitor = monitor.copy()
+
+    if rng.random() < 0.3:
+        augmented_baseline += rng.normal(0.0, 0.01, size=augmented_baseline.shape).astype(np.float32)
+
+    if rng.random() < 0.8:
+        shift_min, shift_max = synthetic_cfg["shift_trace_range"]
+        shift = int(rng.integers(shift_min, shift_max + 1))
+        if shift != 0:
+            augmented_monitor = np.roll(augmented_monitor, shift=shift, axis=1)
+
+    if rng.random() < 0.8:
+        scale_min, scale_max = synthetic_cfg["amplitude_scale_range"]
+        augmented_monitor *= float(rng.uniform(scale_min, scale_max))
+
+    if rng.random() < 0.7:
+        noise_min, noise_max = synthetic_cfg["noise_std_range"]
+        noise_std = float(rng.uniform(noise_min, noise_max))
+        augmented_monitor += rng.normal(0.0, noise_std, size=augmented_monitor.shape).astype(np.float32)
+
+    if rng.random() < 0.6:
+        sigma = float(rng.uniform(0.0, 1.25))
+        if sigma > 1e-3:
+            augmented_monitor = ndimage.gaussian_filter1d(augmented_monitor, sigma=sigma, axis=0)
+
+    if rng.random() < 0.5:
+        drop_min, drop_max = synthetic_cfg["drop_trace_fraction_range"]
+        drop_fraction = float(rng.uniform(drop_min, drop_max))
+        num_drop = int(drop_fraction * augmented_monitor.shape[1])
+        if num_drop > 0:
+            drop_indices = rng.choice(augmented_monitor.shape[1], size=num_drop, replace=False)
+            augmented_monitor[:, drop_indices] = 0.0
+
+    return augmented_baseline.astype(np.float32), augmented_monitor.astype(np.float32)
+
+
 def _train_epoch(
     model: MonitoringUNet,
     loader: DataLoader,
@@ -85,12 +167,13 @@ def _train_epoch(
 ) -> float:
     model.train()
     losses: list[float] = []
-    for features, targets in loader:
+    for features, targets, weights in loader:
         features = _to_device(features, device)
         targets = _to_device(targets, device)
+        weights = _to_device(weights, device)
         optimizer.zero_grad(set_to_none=True)
         logits = model(features)
-        loss = dice_bce_loss(logits, targets)
+        loss = dice_bce_loss(logits, targets, sample_weight=weights)
         loss.backward()
         optimizer.step()
         losses.append(float(loss.detach().cpu()))
@@ -106,7 +189,7 @@ def _collect_logits(
     logits_chunks: list[np.ndarray] = []
     target_chunks: list[np.ndarray] = []
     with torch.no_grad():
-        for features, targets in loader:
+        for features, targets, _weights in loader:
             logits = model(_to_device(features, device)).cpu().numpy()
             logits_chunks.append(logits[:, 0])
             target_chunks.append(targets.numpy()[:, 0])
@@ -122,21 +205,41 @@ def _eval_loss_from_logits(logits: np.ndarray, targets: np.ndarray) -> float:
 
 
 def train_segmentation_model(
-    train_inputs: np.ndarray,
-    train_targets: np.ndarray,
-    val_inputs: np.ndarray,
-    val_targets: np.ndarray,
+    train_split: dict[str, np.ndarray],
+    val_split: dict[str, np.ndarray],
     training_cfg: dict[str, Any],
+    synthetic_cfg: dict[str, Any],
     seed: int,
+    hybrid: bool,
 ) -> dict[str, Any]:
     ensure_torch_seed(seed)
     device = torch.device(training_cfg.get("device", "cpu"))
-    train_ds = MonitoringDataset(train_inputs, train_targets)
-    val_ds = MonitoringDataset(val_inputs, val_targets)
+    train_ds = MonitoringDataset(
+        train_split["baseline"],
+        train_split["monitor"],
+        train_split["change_mask"],
+        train_split["reservoir_mask"],
+        hybrid=hybrid,
+        augment_cfg=synthetic_cfg if hybrid and training_cfg.get("use_hybrid_augmentation", False) else None,
+        use_reservoir_weighting=hybrid and training_cfg.get("use_reservoir_weighting", False),
+        outside_reservoir_weight=training_cfg.get("outside_reservoir_weight", 0.35),
+        seed=seed,
+    )
+    val_ds = MonitoringDataset(
+        val_split["baseline"],
+        val_split["monitor"],
+        val_split["change_mask"],
+        val_split["reservoir_mask"],
+        hybrid=hybrid,
+        augment_cfg=None,
+        use_reservoir_weighting=False,
+        seed=seed + 101,
+    )
     train_loader = DataLoader(train_ds, batch_size=training_cfg["batch_size"], shuffle=True)
     val_loader = DataLoader(val_ds, batch_size=training_cfg["batch_size"], shuffle=False)
 
-    model = MonitoringUNet(in_channels=train_inputs.shape[1]).to(device)
+    in_channels = 6 if hybrid else 2
+    model = MonitoringUNet(in_channels=in_channels).to(device)
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=training_cfg["learning_rate"],
@@ -251,6 +354,14 @@ def _evaluate_field_prediction(
     }
 
 
+def _flatten_results(prefix: str, payload: dict[str, Any], rows: list[dict[str, Any]]) -> None:
+    for key, value in payload.items():
+        if isinstance(value, dict):
+            _flatten_results(f"{prefix}{key}.", value, rows)
+        else:
+            rows.append({"metric": f"{prefix}{key}".rstrip("."), "value": value})
+
+
 def _save_prediction_figure(
     baseline: np.ndarray,
     monitor: np.ndarray,
@@ -296,24 +407,6 @@ def _save_metrics_json(path: Path, payload: dict[str, Any]) -> None:
         return value
 
     path.write_text(json.dumps(_sanitize(payload), indent=2), encoding="utf-8")
-
-
-def _write_report(
-    path: Path,
-    title: str,
-    summary: dict[str, Any],
-) -> None:
-    lines = [f"# {title}", ""]
-    for section_name, section_value in summary.items():
-        lines.append(f"## {section_name}")
-        lines.append("")
-        if isinstance(section_value, dict):
-            for key, value in section_value.items():
-                lines.append(f"- **{key}**: {value}")
-        else:
-            lines.append(str(section_value))
-        lines.append("")
-    path.write_text("\n".join(lines), encoding="utf-8")
 
 
 def _prepare_dirs(output_root: Path) -> dict[str, Path]:
@@ -371,26 +464,21 @@ def train(config: dict[str, Any]) -> dict[str, Any]:
     dirs = _prepare_dirs(output_root)
     bundle = _load_bundle(output_root)
 
-    train_plain_inputs, train_targets = _build_inputs(bundle.train, hybrid=False)
-    val_plain_inputs, val_targets = _build_inputs(bundle.val, hybrid=False)
-    train_hybrid_inputs, _ = _build_inputs(bundle.train, hybrid=True)
-    val_hybrid_inputs, _ = _build_inputs(bundle.val, hybrid=True)
-
     plain_artifact = train_segmentation_model(
-        train_plain_inputs,
-        train_targets,
-        val_plain_inputs,
-        val_targets,
+        bundle.train,
+        bundle.val,
         config["training"],
+        config["synthetic"],
         seed=config["seed"],
+        hybrid=False,
     )
     hybrid_artifact = train_segmentation_model(
-        train_hybrid_inputs,
-        train_targets,
-        val_hybrid_inputs,
-        val_targets,
+        bundle.train,
+        bundle.val,
         config["training"],
+        config["synthetic"],
         seed=config["seed"] + 1,
+        hybrid=True,
     )
 
     _save_model_artifact(dirs["models"] / "plain.pt", plain_artifact)
@@ -492,39 +580,60 @@ def evaluate(config: dict[str, Any]) -> dict[str, Any]:
                 title=f"{split_name.upper()} hybrid example",
             )
 
-    field_pair = load_field_pair(config, split_arrays=bundle.ood)
-    if field_pair is not None:
-        field_plain_inputs = build_plain_channels(field_pair.baseline, field_pair.monitor)[None, ...]
-        field_hybrid_inputs = build_hybrid_channels(field_pair.baseline, field_pair.monitor)[None, ...]
-        plain_probs, plain_uncertainty, _ = predict_probabilities(
-            plain_artifact["model"],
-            field_plain_inputs,
-            device,
-            temperature=plain_artifact["temperature"],
-            mc_passes=1,
-        )
-        hybrid_probs, hybrid_uncertainty, _ = predict_probabilities(
-            hybrid_artifact["model"],
-            field_hybrid_inputs,
-            device,
-            temperature=hybrid_artifact["temperature"],
-            mc_passes=config["training"]["mc_dropout_passes"],
-        )
-        results["field"] = {
-            "name": field_pair.name,
-            "plain_ml": _evaluate_field_prediction(plain_probs[0], plain_uncertainty[0], field_pair.reservoir_mask),
-            "hybrid_ml": _evaluate_field_prediction(hybrid_probs[0], hybrid_uncertainty[0], field_pair.reservoir_mask),
-        }
-        if config["evaluation"]["save_figures"]:
-            _save_prediction_figure(
-                field_pair.baseline,
-                field_pair.monitor,
-                hybrid_probs[0],
-                hybrid_uncertainty[0],
-                None,
-                dirs["figures"] / "field_hybrid_example.png",
-                title=f"Field-style hybrid prediction: {field_pair.name}",
+    field_pairs = load_field_pairs(config, split_arrays=bundle.ood)
+    if field_pairs:
+        pair_results: dict[str, Any] = {}
+        compactness_values: list[float] = []
+        outside_values: list[float] = []
+        uncertainty_values: list[float] = []
+
+        for field_pair in field_pairs:
+            field_plain_inputs = build_plain_channels(field_pair.baseline, field_pair.monitor)[None, ...]
+            field_hybrid_inputs = build_hybrid_channels(field_pair.baseline, field_pair.monitor)[None, ...]
+            plain_probs, plain_uncertainty, _ = predict_probabilities(
+                plain_artifact["model"],
+                field_plain_inputs,
+                device,
+                temperature=plain_artifact["temperature"],
+                mc_passes=1,
             )
+            hybrid_probs, hybrid_uncertainty, _ = predict_probabilities(
+                hybrid_artifact["model"],
+                field_hybrid_inputs,
+                device,
+                temperature=hybrid_artifact["temperature"],
+                mc_passes=config["training"]["mc_dropout_passes"],
+            )
+            hybrid_metrics = _evaluate_field_prediction(hybrid_probs[0], hybrid_uncertainty[0], field_pair.reservoir_mask)
+            pair_results[field_pair.name] = {
+                "plain_ml": _evaluate_field_prediction(plain_probs[0], plain_uncertainty[0], field_pair.reservoir_mask),
+                "hybrid_ml": hybrid_metrics,
+            }
+            if not np.isnan(hybrid_metrics["compactness"]):
+                compactness_values.append(hybrid_metrics["compactness"])
+            if not np.isnan(hybrid_metrics["outside_reservoir_fraction"]):
+                outside_values.append(hybrid_metrics["outside_reservoir_fraction"])
+            uncertainty_values.append(hybrid_metrics["mean_uncertainty"])
+
+            if config["evaluation"]["save_figures"]:
+                _save_prediction_figure(
+                    field_pair.baseline,
+                    field_pair.monitor,
+                    hybrid_probs[0],
+                    hybrid_uncertainty[0],
+                    None,
+                    dirs["figures"] / f"field_{field_pair.name}_hybrid_example.png",
+                    title=f"Field-style hybrid prediction: {field_pair.name}",
+                )
+
+        results["field"] = {
+            "pairs": pair_results,
+            "hybrid_average": {
+                "compactness": float(np.mean(compactness_values)) if compactness_values else float("nan"),
+                "outside_reservoir_fraction": float(np.mean(outside_values)) if outside_values else float("nan"),
+                "mean_uncertainty": float(np.mean(uncertainty_values)) if uncertainty_values else float("nan"),
+            },
+        }
 
     summary_sections = {
         "Overview": {
@@ -537,8 +646,37 @@ def evaluate(config: dict[str, Any]) -> dict[str, Any]:
         "Field": results.get("field", {"status": "not enabled"}),
     }
     _save_metrics_json(dirs["results"] / "metrics.json", results)
-    _write_report(dirs["results"] / "report.md", config["report"]["title"], summary_sections)
+    flat_rows: list[dict[str, Any]] = []
+    _flatten_results("", results, flat_rows)
+    with (dirs["results"] / "summary_table.csv").open("w", encoding="utf-8") as handle:
+        handle.write("metric,value\n")
+        for row in flat_rows:
+            handle.write(f"{row['metric']},{row['value']}\n")
+    _save_metrics_json(dirs["results"] / "summary.json", summary_sections)
     return results
+
+
+def validate_field_setup(config: dict[str, Any]) -> dict[str, Any]:
+    ensure_runtime_environment(config["output_root"], config["seed"])
+    field_cfg = config.get("field", {})
+    if not field_cfg.get("enabled", False):
+        return {"status": "field_disabled"}
+
+    split_arrays = None
+    if field_cfg.get("mode") == "pseudo_sleipner":
+        ood_path = Path(config["output_root"]) / "data" / "ood.npz"
+        if not ood_path.exists():
+            raise FileNotFoundError(
+                f"Pseudo field validation requires generated synthetic data at {ood_path}. "
+                "Run generate/run-all first or switch the config to field.mode=manifest."
+            )
+        split_arrays = load_split(ood_path)
+
+    pairs = load_field_pairs(config, split_arrays=split_arrays)
+    summary = summarize_field_pairs(pairs)
+    summary["mode"] = field_cfg.get("mode", "manifest")
+    summary["manifest_path"] = field_cfg.get("manifest_path", "")
+    return summary
 
 
 def run_all(config: dict[str, Any]) -> dict[str, Any]:

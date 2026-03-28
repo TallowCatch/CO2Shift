@@ -54,10 +54,18 @@ class MonitoringUNet(nn.Module):
         return self.head(d1)
 
 
-def dice_bce_loss(logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-    bce = nn.functional.binary_cross_entropy_with_logits(logits, targets)
+def dice_bce_loss(
+    logits: torch.Tensor,
+    targets: torch.Tensor,
+    sample_weight: torch.Tensor | None = None,
+) -> torch.Tensor:
+    bce = nn.functional.binary_cross_entropy_with_logits(logits, targets, weight=sample_weight)
     probs = torch.sigmoid(logits)
-    intersection = (probs * targets).sum(dim=(1, 2, 3))
-    union = probs.sum(dim=(1, 2, 3)) + targets.sum(dim=(1, 2, 3))
+    if sample_weight is not None:
+        intersection = (probs * targets * sample_weight).sum(dim=(1, 2, 3))
+        union = (probs * sample_weight).sum(dim=(1, 2, 3)) + (targets * sample_weight).sum(dim=(1, 2, 3))
+    else:
+        intersection = (probs * targets).sum(dim=(1, 2, 3))
+        union = probs.sum(dim=(1, 2, 3)) + targets.sum(dim=(1, 2, 3))
     dice_loss = 1.0 - ((2.0 * intersection + 1e-6) / (union + 1e-6))
     return bce + dice_loss.mean()

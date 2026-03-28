@@ -14,6 +14,7 @@ The current implementation is designed to run without downloading the large publ
 - train and evaluate baselines end-to-end
 - optionally run inference on held-out `.npy` or `.npz` field arrays
 - produce figures and a Markdown summary for paper iteration
+- produce figures and machine-readable summaries for paper iteration
 
 ## Quick start
 
@@ -49,6 +50,29 @@ Optional field input should be provided as `.npz` or `.npy` arrays that contain 
 - optional `reservoir_mask`
 - optional `name`
 
+For the current model stack, real field inputs must be exported as 2D sections shaped `[time, trace]`.
+
+For multiple real-data monitor pairs, use a JSON manifest and set:
+
+- `field.enabled: true`
+- `field.mode: manifest`
+- `field.manifest_path: /abs/path/to/manifest.json`
+
+Manifest format:
+
+```json
+{
+  "baseline": "sleipner_baseline.npy",
+  "reservoir_mask": "sleipner_reservoir_mask.npy",
+  "pairs": [
+    {"name": "sleipner_2001", "monitor": "sleipner_2001.npy"},
+    {"name": "sleipner_2006", "monitor": "sleipner_2006.npy"}
+  ]
+}
+```
+
+A ready-to-edit template lives at [`examples/sleipner_manifest.template.json`](/Users/ameerfiras/Propagation/examples/sleipner_manifest.template.json).
+
 ## Main commands
 
 ```bash
@@ -56,6 +80,7 @@ PYTHONPATH=src python3 -m ccs_monitoring.cli generate --config configs/smoke.yam
 PYTHONPATH=src python3 -m ccs_monitoring.cli train --config configs/smoke.yaml
 PYTHONPATH=src python3 -m ccs_monitoring.cli evaluate --config configs/smoke.yaml
 PYTHONPATH=src python3 -m ccs_monitoring.cli run-all --config configs/smoke.yaml
+PYTHONPATH=src python3 -m ccs_monitoring.cli validate-field --config configs/sleipner_manifest.yaml
 ```
 
 ## Public-data alignment
@@ -75,5 +100,5 @@ After `run-all`, the default output tree contains:
 - `runs/<name>/data`: generated synthetic splits
 - `runs/<name>/models`: trained `plain` and `hybrid` checkpoints
 - `runs/<name>/results/metrics.json`: machine-readable metrics
-- `runs/<name>/results/report.md`: a short paper-style summary
+- `runs/<name>/results/summary.json`: a compact run summary
 - `runs/<name>/results/figures`: sample qualitative figures

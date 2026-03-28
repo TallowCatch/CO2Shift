@@ -1,0 +1,14 @@
+{
+  "baseline": "exports/sleipner_1994_baseline.npy",
+  "reservoir_mask": "exports/sleipner_storage_interval_mask.npy",
+  "pairs": [
+    {
+      "name": "sleipner_2001",
+      "monitor": "exports/sleipner_2001_monitor.npy"
+    },
+    {
+      "name": "sleipner_2006",
+      "monitor": "exports/sleipner_2006_monitor.npy"
+    }
+  ]
+}

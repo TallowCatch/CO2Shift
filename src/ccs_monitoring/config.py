@@ -39,6 +39,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "weight_decay": 1e-4,
         "mc_dropout_passes": 12,
         "device": "cpu",
+        "use_hybrid_augmentation": True,
+        "use_reservoir_weighting": True,
+        "outside_reservoir_weight": 0.35,
     },
     "evaluation": {
         "abstain_quantiles": [0.7, 0.8, 0.9],
@@ -47,8 +50,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "field": {
         "enabled": False,
-        "mode": "pseudo_sleipner",
+        "mode": "manifest",
         "path": "",
+        "manifest_path": "",
     },
     "report": {
         "title": "Reliable 4D Change Maps for CCS Monitoring",

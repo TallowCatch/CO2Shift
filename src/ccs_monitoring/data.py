@@ -19,6 +19,16 @@ class FieldPair:
     reservoir_mask: np.ndarray | None = None
 
 
+def _ensure_2d_array(name: str, array: np.ndarray) -> np.ndarray:
+    if array.ndim != 2:
+        raise ValueError(
+            f"{name} must be a 2D section shaped [time, trace] for the current pipeline; got shape {array.shape}."
+        )
+    if min(array.shape) < 2:
+        raise ValueError(f"{name} must have at least 2 samples along each axis; got shape {array.shape}.")
+    return array.astype(np.float32)
+
+
 def ricker_wavelet(length: int, frequency: float) -> np.ndarray:
     t = np.linspace(-(length // 2), length // 2, length, dtype=np.float32)
     x = np.pi * frequency * t
@@ -281,15 +291,91 @@ def create_pseudo_field_pair(split_arrays: dict[str, np.ndarray], sample_index: 
     )
 
 
-def load_field_pair(config: dict[str, Any], split_arrays: dict[str, np.ndarray] | None = None) -> FieldPair | None:
+def _load_array(path: str | Path) -> np.ndarray:
+    path = Path(path)
+    if path.suffix == ".npy":
+        data = np.load(path)
+    elif path.suffix == ".npz":
+        with np.load(path, allow_pickle=False) as arrays:
+            if len(arrays.files) == 1:
+                data = arrays[arrays.files[0]]
+            else:
+                raise ValueError(f"Ambiguous .npz field array at {path}; expected a single array payload.")
+    else:
+        raise ValueError(f"Unsupported array format: {path}")
+    return _ensure_2d_array(str(path), data)
+
+
+def validate_field_pair(pair: FieldPair) -> dict[str, Any]:
+    baseline = _ensure_2d_array(f"{pair.name}.baseline", pair.baseline)
+    monitor = _ensure_2d_array(f"{pair.name}.monitor", pair.monitor)
+    if baseline.shape != monitor.shape:
+        raise ValueError(
+            f"Field pair {pair.name} has mismatched baseline/monitor shapes: {baseline.shape} vs {monitor.shape}."
+        )
+
+    has_reservoir_mask = pair.reservoir_mask is not None
+    if has_reservoir_mask:
+        reservoir_mask = _ensure_2d_array(f"{pair.name}.reservoir_mask", pair.reservoir_mask)
+        if reservoir_mask.shape != baseline.shape:
+            raise ValueError(
+                f"Field pair {pair.name} has a reservoir mask shape {reservoir_mask.shape} "
+                f"that does not match baseline shape {baseline.shape}."
+            )
+
+    return {
+        "name": pair.name,
+        "shape": list(baseline.shape),
+        "has_reservoir_mask": has_reservoir_mask,
+    }
+
+
+def summarize_field_pairs(pairs: list[FieldPair]) -> dict[str, Any]:
+    summaries = [validate_field_pair(pair) for pair in pairs]
+    unique_shapes = sorted({tuple(summary["shape"]) for summary in summaries})
+    return {
+        "num_pairs": len(summaries),
+        "unique_shapes": [list(shape) for shape in unique_shapes],
+        "pairs": summaries,
+    }
+
+
+def load_field_pairs(config: dict[str, Any], split_arrays: dict[str, np.ndarray] | None = None) -> list[FieldPair]:
     field_cfg = config.get("field", {})
     if not field_cfg.get("enabled", False):
-        return None
+        return []
 
     if field_cfg.get("mode") == "pseudo_sleipner":
         if split_arrays is None:
             raise ValueError("Pseudo field mode requires a loaded synthetic split.")
-        return create_pseudo_field_pair(split_arrays)
+        pairs = [create_pseudo_field_pair(split_arrays)]
+        summarize_field_pairs(pairs)
+        return pairs
+
+    if field_cfg.get("mode") == "manifest":
+        manifest_path = Path(field_cfg.get("manifest_path", ""))
+        if not manifest_path.exists():
+            raise FileNotFoundError(f"Field manifest not found: {manifest_path}")
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        pairs: list[FieldPair] = []
+        shared_baseline = manifest.get("baseline")
+        shared_reservoir_mask = manifest.get("reservoir_mask")
+        for entry in manifest.get("pairs", []):
+            baseline_path = entry.get("baseline", shared_baseline)
+            reservoir_mask_path = entry.get("reservoir_mask", shared_reservoir_mask)
+            if not baseline_path:
+                raise ValueError("Each manifest entry must define a baseline path or provide a shared baseline.")
+            pair = FieldPair(
+                name=entry.get("name", Path(entry["monitor"]).stem),
+                baseline=_load_array(manifest_path.parent / baseline_path),
+                monitor=_load_array(manifest_path.parent / entry["monitor"]),
+                reservoir_mask=(
+                    _load_array(manifest_path.parent / reservoir_mask_path) if reservoir_mask_path else None
+                ),
+            )
+            pairs.append(pair)
+        summarize_field_pairs(pairs)
+        return pairs
 
     path = Path(field_cfg.get("path", ""))
     if not path.exists():
@@ -312,4 +398,6 @@ def load_field_pair(config: dict[str, Any], split_arrays: dict[str, np.ndarray] 
     else:
         raise ValueError("Only .npz and .npy field inputs are supported in the bootstrap implementation.")
 
-    return FieldPair(name=name, baseline=baseline, monitor=monitor, reservoir_mask=reservoir_mask)
+    pairs = [FieldPair(name=name, baseline=baseline, monitor=monitor, reservoir_mask=reservoir_mask)]
+    summarize_field_pairs(pairs)
+    return pairs
