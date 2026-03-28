@@ -1,0 +1,42 @@
+seed: 7
+output_root: runs/smoke
+
+synthetic:
+  num_train: 96
+  num_val: 24
+  num_test: 24
+  num_ood: 24
+  section_shape: [128, 96]
+  geology_families:
+    train: [0, 1, 2]
+    test: [0, 1, 2]
+    ood: [3, 4]
+  mismatch_probability: 0.8
+  clean_probability: 0.25
+  plume_radius_range: [8, 16]
+  noise_std_range: [0.01, 0.08]
+  shift_trace_range: [-4, 4]
+  wavelet_freq_range: [0.04, 0.12]
+  amplitude_scale_range: [0.85, 1.2]
+  drop_trace_fraction_range: [0.0, 0.12]
+
+training:
+  batch_size: 8
+  epochs: 5
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  mc_dropout_passes: 10
+  device: cpu
+
+evaluation:
+  abstain_quantiles: [0.7, 0.8, 0.9]
+  threshold_quantile: 0.92
+  save_figures: true
+
+field:
+  enabled: true
+  mode: pseudo_sleipner
+  path: ""
+
+report:
+  title: "Reliable 4D Change Maps for CCS Monitoring"
