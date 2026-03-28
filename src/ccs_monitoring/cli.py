@@ -10,7 +10,11 @@ os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 from .config import load_config
 from .pipeline import evaluate, generate, run_all, train, validate_field_setup
-from .sleipner import export_sleipner_plume_support_traces, export_sleipner_storage_interval_mask
+from .sleipner import (
+    export_sleipner_inline_section,
+    export_sleipner_plume_support_traces,
+    export_sleipner_storage_interval_mask,
+)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -22,6 +26,7 @@ def _build_parser() -> argparse.ArgumentParser:
         ("evaluate", "Evaluate all baselines and models"),
         ("run-all", "Run generation, training, and evaluation"),
         ("validate-field", "Validate a real-data field manifest or field input config"),
+        ("export-sleipner-inline", "Export a normalized Sleipner inline section to .npy"),
         ("build-sleipner-mask", "Build a storage-interval mask from Sleipner benchmark surfaces"),
         ("build-sleipner-plume-support", "Build a 2010 plume-support trace mask from Sleipner benchmark polygons"),
     ):
@@ -45,6 +50,29 @@ def main() -> None:
         result = run_all(config)
     elif args.command == "validate-field":
         result = validate_field_setup(config)
+    elif args.command == "export-sleipner-inline":
+        field_cfg = config.get("field", {})
+        export_segy_path = field_cfg.get("export_segy_path", "") or field_cfg.get("segy_path", "")
+        inline_number = int(field_cfg.get("inline_number", 0))
+        output_path = field_cfg.get("export_output_path", "")
+        normalization_paths = field_cfg.get("export_normalization_segy_paths", [])
+        missing = [
+            name
+            for name, value in (
+                ("field.export_segy_path", export_segy_path),
+                ("field.inline_number", inline_number),
+                ("field.export_output_path", output_path),
+            )
+            if not value
+        ]
+        if missing:
+            raise ValueError(f"Missing config values for export-sleipner-inline: {missing}")
+        result = export_sleipner_inline_section(
+            segy_path=export_segy_path,
+            inline_number=inline_number,
+            output_path=output_path,
+            normalization_reference_paths=normalization_paths,
+        )
     elif args.command == "build-sleipner-mask":
         field_cfg = config.get("field", {})
         benchmark_root = field_cfg.get("benchmark_root", "")

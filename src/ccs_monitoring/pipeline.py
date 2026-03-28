@@ -849,6 +849,8 @@ def evaluate(config: dict[str, Any]) -> dict[str, Any]:
         constrained_uncertainty_values: list[float] = []
         constrained_binaries: dict[str, np.ndarray] = {}
         constrained_fractions: dict[str, float] = {}
+        constrained_trace_fractions: dict[str, float] = {}
+        constrained_support_iou: dict[str, float] = {}
 
         for field_output in field_outputs:
             field_pair = field_output["pair"]
@@ -892,6 +894,8 @@ def evaluate(config: dict[str, Any]) -> dict[str, Any]:
             constrained_uncertainty_values.append(constrained_metrics["mean_uncertainty"])
             constrained_binaries[field_pair.name] = constrained_binary.astype(bool)
             constrained_fractions[field_pair.name] = float(constrained_metrics["predicted_fraction"])
+            constrained_trace_fractions[field_pair.name] = float(support_metrics.get("predicted_trace_fraction", float("nan")))
+            constrained_support_iou[field_pair.name] = float(support_metrics.get("trace_iou_with_2010_support", float("nan")))
 
             if config["evaluation"]["save_figures"]:
                 _save_prediction_figure(
@@ -939,15 +943,38 @@ def evaluate(config: dict[str, Any]) -> dict[str, Any]:
                 f"{earlier}->{later}": float(constrained_fractions[later] - constrained_fractions[earlier])
                 for earlier, later in consecutive_pairs
             }
+            trace_fraction_deltas = {
+                f"{earlier}->{later}": float(constrained_trace_fractions[later] - constrained_trace_fractions[earlier])
+                for earlier, later in consecutive_pairs
+                if not np.isnan(constrained_trace_fractions[earlier]) and not np.isnan(constrained_trace_fractions[later])
+            }
             pairwise_iou = {
                 f"{earlier}<->{later}": _binary_iou(constrained_binaries[earlier], constrained_binaries[later])
                 for earlier, later in consecutive_pairs
             }
+            support_iou_progression = {
+                name: float(value) for name, value in constrained_support_iou.items() if not np.isnan(value)
+            }
             results["field"]["temporal_consistency"] = {
                 "ordered_pairs": ordered_names,
                 "constrained_area_deltas": area_deltas,
+                "constrained_trace_fraction_deltas": trace_fraction_deltas,
                 "constrained_pairwise_iou": pairwise_iou,
                 "constrained_area_non_decreasing": all(delta >= 0.0 for delta in area_deltas.values()),
+                "constrained_trace_fraction_non_decreasing": (
+                    all(delta >= 0.0 for delta in trace_fraction_deltas.values()) if trace_fraction_deltas else False
+                ),
+                "constrained_trace_fraction_by_pair": constrained_trace_fractions,
+                "constrained_support_iou_by_pair": support_iou_progression,
+                "constrained_support_iou_non_decreasing": (
+                    all(
+                        support_iou_progression[later] >= support_iou_progression[earlier]
+                        for earlier, later in consecutive_pairs
+                        if earlier in support_iou_progression and later in support_iou_progression
+                    )
+                    if support_iou_progression
+                    else False
+                ),
             }
         if plume_support_traces is not None:
             results["field"]["support_note"] = (

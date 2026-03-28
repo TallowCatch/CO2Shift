@@ -81,7 +81,11 @@ PYTHONPATH=src python3 -m ccs_monitoring.cli train --config configs/smoke.yaml
 PYTHONPATH=src python3 -m ccs_monitoring.cli evaluate --config configs/smoke.yaml
 PYTHONPATH=src python3 -m ccs_monitoring.cli run-all --config configs/smoke.yaml
 PYTHONPATH=src python3 -m ccs_monitoring.cli validate-field --config configs/sleipner_manifest.yaml
+PYTHONPATH=.vendor:src python3 -m ccs_monitoring.cli export-sleipner-inline --config configs/sleipner_manifest.yaml
 ```
+
+For the real Sleipner workflow, `export-sleipner-inline` writes a `.npy` section for the configured `field.inline_number`.
+If `field.export_normalization_segy_paths` is set, the export uses one shared reference standard deviation across those vintages so later field comparisons stay on a common amplitude scale.
 
 ## Public-data alignment
 

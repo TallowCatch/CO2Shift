@@ -76,6 +76,106 @@ def _load_inline_geometry(segy_path: str | Path, inline_number: int) -> tuple[np
     return xlines, x_coords.astype(np.float32), y_coords.astype(np.float32), sample_axis.astype(np.float32)
 
 
+def _load_inline_section(
+    segy_path: str | Path,
+    inline_number: int,
+) -> dict[str, np.ndarray]:
+    try:
+        import segyio
+        from segyio import TraceField
+    except ImportError as exc:  # pragma: no cover - environment dependent
+        raise ImportError(
+            "segyio is required for Sleipner section export. Install it or use PYTHONPATH=.vendor:src in this workspace."
+        ) from exc
+
+    with segyio.open(str(segy_path), "r", ignore_geometry=False) as segy_file:
+        inline_values = segy_file.attributes(TraceField.INLINE_3D)[:]
+        crossline_values = segy_file.attributes(TraceField.CROSSLINE_3D)[:]
+        cdp_x = segy_file.attributes(TraceField.CDP_X)[:].astype(np.float32)
+        cdp_y = segy_file.attributes(TraceField.CDP_Y)[:].astype(np.float32)
+        scalar = segy_file.attributes(TraceField.SourceGroupScalar)[:].astype(np.int32)
+        sample_axis = np.asarray(segy_file.samples, dtype=np.float32)
+
+        trace_indices = np.where(inline_values == inline_number)[0]
+        if trace_indices.size == 0:
+            raise ValueError(f"Inline {inline_number} was not found in {segy_path}.")
+
+        order = np.argsort(crossline_values[trace_indices])
+        trace_indices = trace_indices[order]
+        section = np.stack([segy_file.trace[int(index)] for index in trace_indices], axis=1).astype(np.float32)
+
+    xlines = crossline_values[trace_indices].astype(np.int32)
+    scale = np.where(
+        scalar[trace_indices] < 0,
+        1.0 / np.abs(scalar[trace_indices]),
+        np.where(scalar[trace_indices] > 0, scalar[trace_indices], 1.0),
+    ).astype(np.float32)
+    x_coords = cdp_x[trace_indices] * scale
+    y_coords = cdp_y[trace_indices] * scale
+    return {
+        "section": section,
+        "xlines": xlines.astype(np.int32),
+        "trace_x": x_coords.astype(np.float32),
+        "trace_y": y_coords.astype(np.float32),
+        "sample_axis_ms": sample_axis.astype(np.float32),
+    }
+
+
+def export_sleipner_inline_section(
+    segy_path: str | Path,
+    inline_number: int,
+    output_path: str | Path,
+    normalization_reference_paths: list[str] | tuple[str, ...] | None = None,
+) -> dict[str, Any]:
+    source = _load_inline_section(segy_path, inline_number)
+    reference_paths = [str(Path(path)) for path in (normalization_reference_paths or [])]
+    reference_sections: list[np.ndarray] = []
+    for reference_path in reference_paths:
+        reference = _load_inline_section(reference_path, inline_number)
+        if reference["section"].shape != source["section"].shape:
+            raise ValueError(
+                f"Normalization reference {reference_path} has shape {reference['section'].shape}, "
+                f"but source {segy_path} has shape {source['section'].shape}."
+            )
+        reference_sections.append(reference["section"])
+
+    if reference_sections:
+        stacked_reference = np.concatenate([section.reshape(-1) for section in reference_sections], axis=0)
+        reference_std = float(np.std(stacked_reference))
+        if reference_std <= 0.0:
+            raise ValueError("Reference standard deviation must be positive for Sleipner export.")
+        normalized = source["section"] / reference_std
+    else:
+        reference_std = 1.0
+        normalized = source["section"].copy()
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    np.save(output_path, normalized.astype(np.float32))
+
+    metadata_path = output_path.with_suffix(".metadata.json")
+    metadata = {
+        "segy_path": str(segy_path),
+        "inline_number": int(inline_number),
+        "output_path": str(output_path),
+        "metadata_path": str(metadata_path),
+        "shape": [int(dimension) for dimension in normalized.shape],
+        "normalization_reference_paths": reference_paths,
+        "normalization_reference_std": float(reference_std),
+        "normalization_scale_factor": float(1.0 / reference_std) if reference_std > 0 else None,
+        "raw_mean": float(source["section"].mean()),
+        "raw_std": float(source["section"].std()),
+        "normalized_mean": float(normalized.mean()),
+        "normalized_std": float(normalized.std()),
+        "sample_min_ms": float(source["sample_axis_ms"].min()),
+        "sample_max_ms": float(source["sample_axis_ms"].max()),
+        "xline_min": int(source["xlines"].min()),
+        "xline_max": int(source["xlines"].max()),
+    }
+    metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    return metadata
+
+
 def build_sleipner_storage_interval_mask(
     benchmark_root: str | Path,
     segy_path: str | Path,

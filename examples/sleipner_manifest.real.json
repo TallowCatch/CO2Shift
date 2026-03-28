@@ -7,6 +7,10 @@
       "monitor": "exports/sleipner_2001_monitor.npy"
     },
     {
+      "name": "sleipner_2004_inline_1840_mid",
+      "monitor": "exports/sleipner_2004_monitor.npy"
+    },
+    {
       "name": "sleipner_2006_inline_1840_mid",
       "monitor": "exports/sleipner_2006_monitor.npy"
     }
