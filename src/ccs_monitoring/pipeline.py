@@ -367,6 +367,16 @@ def _summarize_field_binary(
     }
 
 
+def _binary_iou(first: np.ndarray, second: np.ndarray) -> float:
+    first = first.astype(bool)
+    second = second.astype(bool)
+    union = np.sum(first | second)
+    if union == 0:
+        return float("nan")
+    intersection = np.sum(first & second)
+    return float(intersection / union)
+
+
 def _postprocess_field_prediction(
     probabilities: np.ndarray,
     uncertainty: np.ndarray,
@@ -681,6 +691,8 @@ def evaluate(config: dict[str, Any]) -> dict[str, Any]:
         constrained_compactness_values: list[float] = []
         constrained_outside_values: list[float] = []
         constrained_uncertainty_values: list[float] = []
+        constrained_binaries: dict[str, np.ndarray] = {}
+        constrained_fractions: dict[str, float] = {}
 
         for field_pair in field_pairs:
             field_plain_inputs = build_plain_channels(field_pair.baseline, field_pair.monitor)[None, ...]
@@ -730,6 +742,8 @@ def evaluate(config: dict[str, Any]) -> dict[str, Any]:
             if not np.isnan(constrained_metrics["outside_reservoir_fraction"]):
                 constrained_outside_values.append(constrained_metrics["outside_reservoir_fraction"])
             constrained_uncertainty_values.append(constrained_metrics["mean_uncertainty"])
+            constrained_binaries[field_pair.name] = constrained_binary.astype(bool)
+            constrained_fractions[field_pair.name] = float(constrained_metrics["predicted_fraction"])
 
             if config["evaluation"]["save_figures"]:
                 _save_prediction_figure(
@@ -770,6 +784,23 @@ def evaluate(config: dict[str, Any]) -> dict[str, Any]:
                 ),
             },
         }
+        if len(constrained_binaries) >= 2:
+            ordered_names = sorted(constrained_binaries)
+            consecutive_pairs = list(zip(ordered_names[:-1], ordered_names[1:]))
+            area_deltas = {
+                f"{earlier}->{later}": float(constrained_fractions[later] - constrained_fractions[earlier])
+                for earlier, later in consecutive_pairs
+            }
+            pairwise_iou = {
+                f"{earlier}<->{later}": _binary_iou(constrained_binaries[earlier], constrained_binaries[later])
+                for earlier, later in consecutive_pairs
+            }
+            results["field"]["temporal_consistency"] = {
+                "ordered_pairs": ordered_names,
+                "constrained_area_deltas": area_deltas,
+                "constrained_pairwise_iou": pairwise_iou,
+                "constrained_area_non_decreasing": all(delta >= 0.0 for delta in area_deltas.values()),
+            }
 
     summary_sections = {
         "Overview": {
