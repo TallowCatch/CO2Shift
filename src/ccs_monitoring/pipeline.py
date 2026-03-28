@@ -354,6 +354,98 @@ def _evaluate_field_prediction(
     }
 
 
+def _summarize_field_binary(
+    binary: np.ndarray,
+    uncertainty: np.ndarray,
+    reservoir_mask: np.ndarray | None,
+) -> dict[str, Any]:
+    return {
+        "predicted_fraction": float(np.mean(binary)),
+        "compactness": compactness_score(binary),
+        "outside_reservoir_fraction": outside_reservoir_fraction(binary, reservoir_mask),
+        "mean_uncertainty": float(np.mean(uncertainty)),
+    }
+
+
+def _postprocess_field_prediction(
+    probabilities: np.ndarray,
+    uncertainty: np.ndarray,
+    reservoir_mask: np.ndarray | None,
+    field_cfg: dict[str, Any],
+) -> tuple[np.ndarray, dict[str, Any]]:
+    post_cfg = field_cfg.get("postprocess", {})
+    if not post_cfg.get("enabled", False):
+        binary = probabilities >= 0.5
+        return binary.astype(bool), {
+            "enabled": False,
+            "probability_threshold": 0.5,
+            "uncertainty_threshold": None,
+            "num_components_kept": None,
+        }
+
+    threshold_mode = str(post_cfg.get("threshold_mode", "fixed")).lower()
+    if threshold_mode == "quantile":
+        quantile = float(post_cfg.get("probability_quantile", 0.92))
+        probability_threshold = max(
+            float(post_cfg.get("min_probability_threshold", 0.5)),
+            float(np.quantile(probabilities, quantile)),
+        )
+    else:
+        probability_threshold = float(post_cfg.get("probability_threshold", 0.5))
+
+    binary = probabilities >= probability_threshold
+    uncertainty_threshold: float | None = None
+    uncertainty_quantile = float(post_cfg.get("uncertainty_quantile", 1.0))
+    if uncertainty_quantile < 1.0:
+        uncertainty_threshold = float(np.quantile(uncertainty, uncertainty_quantile))
+        binary &= uncertainty <= uncertainty_threshold
+
+    if post_cfg.get("apply_reservoir_mask", True) and reservoir_mask is not None:
+        binary &= reservoir_mask > 0.5
+
+    closing_iterations = int(post_cfg.get("closing_iterations", 0))
+    if closing_iterations > 0:
+        binary = ndimage.binary_closing(binary, iterations=closing_iterations)
+
+    opening_iterations = int(post_cfg.get("opening_iterations", 0))
+    if opening_iterations > 0:
+        binary = ndimage.binary_opening(binary, iterations=opening_iterations)
+
+    keep_largest_components = int(post_cfg.get("keep_largest_components", 0))
+    min_component_size = int(post_cfg.get("min_component_size", 0))
+    min_component_fraction = float(post_cfg.get("min_component_fraction", 0.0))
+    min_size_from_fraction = int(np.ceil(binary.size * min_component_fraction))
+    component_size_floor = max(min_component_size, min_size_from_fraction)
+
+    labels, num_labels = ndimage.label(binary)
+    num_components_kept = 0
+    if num_labels > 0:
+        component_sizes = ndimage.sum(binary, labels, index=np.arange(1, num_labels + 1))
+        label_sizes = [(label_id + 1, int(size)) for label_id, size in enumerate(component_sizes)]
+        label_sizes = [entry for entry in label_sizes if entry[1] >= component_size_floor]
+        label_sizes.sort(key=lambda item: item[1], reverse=True)
+        if keep_largest_components > 0:
+            label_sizes = label_sizes[:keep_largest_components]
+        keep_labels = {label_id for label_id, _size in label_sizes}
+        binary = np.isin(labels, list(keep_labels))
+        num_components_kept = len(keep_labels)
+    else:
+        binary = binary.astype(bool)
+
+    metadata = {
+        "enabled": True,
+        "threshold_mode": threshold_mode,
+        "probability_threshold": float(probability_threshold),
+        "uncertainty_threshold": uncertainty_threshold,
+        "applied_reservoir_mask": bool(post_cfg.get("apply_reservoir_mask", True) and reservoir_mask is not None),
+        "closing_iterations": closing_iterations,
+        "opening_iterations": opening_iterations,
+        "component_size_floor": int(component_size_floor),
+        "num_components_kept": int(num_components_kept),
+    }
+    return binary.astype(bool), metadata
+
+
 def _flatten_results(prefix: str, payload: dict[str, Any], rows: list[dict[str, Any]]) -> None:
     for key, value in payload.items():
         if isinstance(value, dict):
@@ -583,9 +675,12 @@ def evaluate(config: dict[str, Any]) -> dict[str, Any]:
     field_pairs = load_field_pairs(config, split_arrays=bundle.ood)
     if field_pairs:
         pair_results: dict[str, Any] = {}
-        compactness_values: list[float] = []
-        outside_values: list[float] = []
-        uncertainty_values: list[float] = []
+        raw_compactness_values: list[float] = []
+        raw_outside_values: list[float] = []
+        raw_uncertainty_values: list[float] = []
+        constrained_compactness_values: list[float] = []
+        constrained_outside_values: list[float] = []
+        constrained_uncertainty_values: list[float] = []
 
         for field_pair in field_pairs:
             field_plain_inputs = build_plain_channels(field_pair.baseline, field_pair.monitor)[None, ...]
@@ -605,15 +700,36 @@ def evaluate(config: dict[str, Any]) -> dict[str, Any]:
                 mc_passes=config["training"]["mc_dropout_passes"],
             )
             hybrid_metrics = _evaluate_field_prediction(hybrid_probs[0], hybrid_uncertainty[0], field_pair.reservoir_mask)
+            constrained_binary, constraint_metadata = _postprocess_field_prediction(
+                hybrid_probs[0],
+                hybrid_uncertainty[0],
+                field_pair.reservoir_mask,
+                config.get("field", {}),
+            )
+            constrained_metrics = _summarize_field_binary(
+                constrained_binary,
+                hybrid_uncertainty[0],
+                field_pair.reservoir_mask,
+            )
             pair_results[field_pair.name] = {
                 "plain_ml": _evaluate_field_prediction(plain_probs[0], plain_uncertainty[0], field_pair.reservoir_mask),
                 "hybrid_ml": hybrid_metrics,
+                "hybrid_ml_constrained": {
+                    **constrained_metrics,
+                    "constraint_metadata": constraint_metadata,
+                },
             }
             if not np.isnan(hybrid_metrics["compactness"]):
-                compactness_values.append(hybrid_metrics["compactness"])
+                raw_compactness_values.append(hybrid_metrics["compactness"])
             if not np.isnan(hybrid_metrics["outside_reservoir_fraction"]):
-                outside_values.append(hybrid_metrics["outside_reservoir_fraction"])
-            uncertainty_values.append(hybrid_metrics["mean_uncertainty"])
+                raw_outside_values.append(hybrid_metrics["outside_reservoir_fraction"])
+            raw_uncertainty_values.append(hybrid_metrics["mean_uncertainty"])
+
+            if not np.isnan(constrained_metrics["compactness"]):
+                constrained_compactness_values.append(constrained_metrics["compactness"])
+            if not np.isnan(constrained_metrics["outside_reservoir_fraction"]):
+                constrained_outside_values.append(constrained_metrics["outside_reservoir_fraction"])
+            constrained_uncertainty_values.append(constrained_metrics["mean_uncertainty"])
 
             if config["evaluation"]["save_figures"]:
                 _save_prediction_figure(
@@ -625,13 +741,33 @@ def evaluate(config: dict[str, Any]) -> dict[str, Any]:
                     dirs["figures"] / f"field_{field_pair.name}_hybrid_example.png",
                     title=f"Field-style hybrid prediction: {field_pair.name}",
                 )
+                _save_prediction_figure(
+                    field_pair.baseline,
+                    field_pair.monitor,
+                    constrained_binary.astype(np.float32),
+                    hybrid_uncertainty[0],
+                    None,
+                    dirs["figures"] / f"field_{field_pair.name}_hybrid_constrained.png",
+                    title=f"Field-style constrained hybrid prediction: {field_pair.name}",
+                )
 
         results["field"] = {
             "pairs": pair_results,
             "hybrid_average": {
-                "compactness": float(np.mean(compactness_values)) if compactness_values else float("nan"),
-                "outside_reservoir_fraction": float(np.mean(outside_values)) if outside_values else float("nan"),
-                "mean_uncertainty": float(np.mean(uncertainty_values)) if uncertainty_values else float("nan"),
+                "compactness": float(np.mean(raw_compactness_values)) if raw_compactness_values else float("nan"),
+                "outside_reservoir_fraction": float(np.mean(raw_outside_values)) if raw_outside_values else float("nan"),
+                "mean_uncertainty": float(np.mean(raw_uncertainty_values)) if raw_uncertainty_values else float("nan"),
+            },
+            "hybrid_constrained_average": {
+                "compactness": (
+                    float(np.mean(constrained_compactness_values)) if constrained_compactness_values else float("nan")
+                ),
+                "outside_reservoir_fraction": (
+                    float(np.mean(constrained_outside_values)) if constrained_outside_values else float("nan")
+                ),
+                "mean_uncertainty": (
+                    float(np.mean(constrained_uncertainty_values)) if constrained_uncertainty_values else float("nan")
+                ),
             },
         }
 

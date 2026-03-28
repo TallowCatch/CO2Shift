@@ -8,6 +8,7 @@ os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 import torch
 from torch import nn
+from torch.nn import functional as F
 
 
 class DoubleConv(nn.Module):
@@ -44,6 +45,13 @@ class MonitoringUNet(nn.Module):
         self.head = nn.Conv2d(base_channels, 1, kernel_size=1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        input_height, input_width = x.shape[-2:]
+        pad_height = (-input_height) % 8
+        pad_width = (-input_width) % 8
+        if pad_height or pad_width:
+            # Preserve edge amplitudes while making encoder-decoder shapes compatible.
+            x = F.pad(x, (0, pad_width, 0, pad_height), mode="replicate")
+
         e1 = self.enc1(x)
         e2 = self.enc2(self.pool(e1))
         e3 = self.enc3(self.pool(e2))
@@ -51,7 +59,10 @@ class MonitoringUNet(nn.Module):
         d3 = self.dec3(torch.cat([self.up3(b), e3], dim=1))
         d2 = self.dec2(torch.cat([self.up2(d3), e2], dim=1))
         d1 = self.dec1(torch.cat([self.up1(d2), e1], dim=1))
-        return self.head(d1)
+        logits = self.head(d1)
+        if pad_height or pad_width:
+            logits = logits[..., :input_height, :input_width]
+        return logits
 
 
 def dice_bce_loss(

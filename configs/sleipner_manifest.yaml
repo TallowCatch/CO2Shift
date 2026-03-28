@@ -5,10 +5,25 @@ field:
   enabled: true
   mode: manifest
   path: ""
-  manifest_path: examples/sleipner_manifest.template.json
+  manifest_path: examples/sleipner_manifest.real.json
+  benchmark_root: /tmp/sleipner_benchmark/extract/velocities_trends_surfaces/data
+  segy_path: examples/exports/raw/94p07mid.sgy
+  inline_number: 1840
+  output_mask_path: examples/exports/sleipner_storage_interval_mask.npy
+  postprocess:
+    enabled: true
+    threshold_mode: quantile
+    probability_quantile: 0.92
+    min_probability_threshold: 0.5
+    uncertainty_quantile: 0.85
+    apply_reservoir_mask: true
+    closing_iterations: 1
+    opening_iterations: 1
+    min_component_size: 400
+    keep_largest_components: 3
 
 evaluation:
   save_figures: true
 
 report:
-  title: "CO2Shift field intake validation"
+  title: "CO2Shift real Sleipner field evaluation"
