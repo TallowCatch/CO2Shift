@@ -16,6 +16,8 @@ field:
     probability_quantile: 0.92
     min_probability_threshold: 0.5
     uncertainty_quantile: 0.85
+    shared_across_pairs: true
+    shared_use_reservoir_region: true
     apply_reservoir_mask: true
     closing_iterations: 1
     opening_iterations: 1

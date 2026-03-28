@@ -64,6 +64,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "probability_quantile": 0.92,
             "min_probability_threshold": 0.5,
             "uncertainty_quantile": 1.0,
+            "shared_across_pairs": False,
+            "shared_use_reservoir_region": True,
             "apply_reservoir_mask": True,
             "closing_iterations": 0,
             "opening_iterations": 0,

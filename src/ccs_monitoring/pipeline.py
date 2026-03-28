@@ -377,13 +377,74 @@ def _binary_iou(first: np.ndarray, second: np.ndarray) -> float:
     return float(intersection / union)
 
 
+def _collect_field_region_values(
+    values: np.ndarray,
+    reservoir_mask: np.ndarray | None,
+    post_cfg: dict[str, Any],
+) -> np.ndarray:
+    if post_cfg.get("shared_use_reservoir_region", True) and reservoir_mask is not None:
+        masked = values[reservoir_mask > 0.5]
+        if masked.size > 0:
+            return masked.astype(np.float32)
+    return values.reshape(-1).astype(np.float32)
+
+
+def _compute_shared_field_postprocess_context(
+    probability_maps: list[np.ndarray],
+    uncertainty_maps: list[np.ndarray],
+    reservoir_masks: list[np.ndarray | None],
+    field_cfg: dict[str, Any],
+) -> dict[str, Any]:
+    post_cfg = field_cfg.get("postprocess", {})
+    if not post_cfg.get("enabled", False) or not post_cfg.get("shared_across_pairs", False):
+        return {}
+
+    pooled_probabilities = np.concatenate(
+        [
+            _collect_field_region_values(probabilities, reservoir_mask, post_cfg)
+            for probabilities, reservoir_mask in zip(probability_maps, reservoir_masks)
+        ],
+        axis=0,
+    )
+    pooled_uncertainties = np.concatenate(
+        [
+            _collect_field_region_values(uncertainty, reservoir_mask, post_cfg)
+            for uncertainty, reservoir_mask in zip(uncertainty_maps, reservoir_masks)
+        ],
+        axis=0,
+    )
+
+    threshold_mode = str(post_cfg.get("threshold_mode", "fixed")).lower()
+    if threshold_mode == "quantile":
+        quantile = float(post_cfg.get("probability_quantile", 0.92))
+        probability_threshold = max(
+            float(post_cfg.get("min_probability_threshold", 0.5)),
+            float(np.quantile(pooled_probabilities, quantile)),
+        )
+    else:
+        probability_threshold = float(post_cfg.get("probability_threshold", 0.5))
+
+    uncertainty_threshold: float | None = None
+    uncertainty_quantile = float(post_cfg.get("uncertainty_quantile", 1.0))
+    if uncertainty_quantile < 1.0:
+        uncertainty_threshold = float(np.quantile(pooled_uncertainties, uncertainty_quantile))
+
+    return {
+        "probability_threshold": float(probability_threshold),
+        "uncertainty_threshold": uncertainty_threshold,
+        "threshold_source": "shared_field_pairs",
+    }
+
+
 def _postprocess_field_prediction(
     probabilities: np.ndarray,
     uncertainty: np.ndarray,
     reservoir_mask: np.ndarray | None,
     field_cfg: dict[str, Any],
+    shared_context: dict[str, Any] | None = None,
 ) -> tuple[np.ndarray, dict[str, Any]]:
     post_cfg = field_cfg.get("postprocess", {})
+    shared_context = shared_context or {}
     if not post_cfg.get("enabled", False):
         binary = probabilities >= 0.5
         return binary.astype(bool), {
@@ -394,20 +455,30 @@ def _postprocess_field_prediction(
         }
 
     threshold_mode = str(post_cfg.get("threshold_mode", "fixed")).lower()
-    if threshold_mode == "quantile":
+    threshold_source = "per_pair"
+    if "probability_threshold" in shared_context:
+        probability_threshold = float(shared_context["probability_threshold"])
+        threshold_source = str(shared_context.get("threshold_source", "shared_field_pairs"))
+    elif threshold_mode == "quantile":
         quantile = float(post_cfg.get("probability_quantile", 0.92))
+        threshold_values = _collect_field_region_values(probabilities, reservoir_mask, post_cfg)
         probability_threshold = max(
             float(post_cfg.get("min_probability_threshold", 0.5)),
-            float(np.quantile(probabilities, quantile)),
+            float(np.quantile(threshold_values, quantile)),
         )
     else:
         probability_threshold = float(post_cfg.get("probability_threshold", 0.5))
 
     binary = probabilities >= probability_threshold
     uncertainty_threshold: float | None = None
-    uncertainty_quantile = float(post_cfg.get("uncertainty_quantile", 1.0))
-    if uncertainty_quantile < 1.0:
-        uncertainty_threshold = float(np.quantile(uncertainty, uncertainty_quantile))
+    if "uncertainty_threshold" in shared_context and shared_context["uncertainty_threshold"] is not None:
+        uncertainty_threshold = float(shared_context["uncertainty_threshold"])
+    else:
+        uncertainty_quantile = float(post_cfg.get("uncertainty_quantile", 1.0))
+        if uncertainty_quantile < 1.0:
+            threshold_values = _collect_field_region_values(uncertainty, reservoir_mask, post_cfg)
+            uncertainty_threshold = float(np.quantile(threshold_values, uncertainty_quantile))
+    if uncertainty_threshold is not None:
         binary &= uncertainty <= uncertainty_threshold
 
     if post_cfg.get("apply_reservoir_mask", True) and reservoir_mask is not None:
@@ -447,6 +518,8 @@ def _postprocess_field_prediction(
         "threshold_mode": threshold_mode,
         "probability_threshold": float(probability_threshold),
         "uncertainty_threshold": uncertainty_threshold,
+        "threshold_source": threshold_source,
+        "shared_across_pairs": bool(post_cfg.get("shared_across_pairs", False)),
         "applied_reservoir_mask": bool(post_cfg.get("apply_reservoir_mask", True) and reservoir_mask is not None),
         "closing_iterations": closing_iterations,
         "opening_iterations": opening_iterations,
@@ -684,16 +757,7 @@ def evaluate(config: dict[str, Any]) -> dict[str, Any]:
 
     field_pairs = load_field_pairs(config, split_arrays=bundle.ood)
     if field_pairs:
-        pair_results: dict[str, Any] = {}
-        raw_compactness_values: list[float] = []
-        raw_outside_values: list[float] = []
-        raw_uncertainty_values: list[float] = []
-        constrained_compactness_values: list[float] = []
-        constrained_outside_values: list[float] = []
-        constrained_uncertainty_values: list[float] = []
-        constrained_binaries: dict[str, np.ndarray] = {}
-        constrained_fractions: dict[str, float] = {}
-
+        field_outputs: list[dict[str, Any]] = []
         for field_pair in field_pairs:
             field_plain_inputs = build_plain_channels(field_pair.baseline, field_pair.monitor)[None, ...]
             field_hybrid_inputs = build_hybrid_channels(field_pair.baseline, field_pair.monitor)[None, ...]
@@ -711,20 +775,54 @@ def evaluate(config: dict[str, Any]) -> dict[str, Any]:
                 temperature=hybrid_artifact["temperature"],
                 mc_passes=config["training"]["mc_dropout_passes"],
             )
-            hybrid_metrics = _evaluate_field_prediction(hybrid_probs[0], hybrid_uncertainty[0], field_pair.reservoir_mask)
+            field_outputs.append(
+                {
+                    "pair": field_pair,
+                    "plain_probs": plain_probs[0],
+                    "plain_uncertainty": plain_uncertainty[0],
+                    "hybrid_probs": hybrid_probs[0],
+                    "hybrid_uncertainty": hybrid_uncertainty[0],
+                }
+            )
+
+        shared_context = _compute_shared_field_postprocess_context(
+            [entry["hybrid_probs"] for entry in field_outputs],
+            [entry["hybrid_uncertainty"] for entry in field_outputs],
+            [entry["pair"].reservoir_mask for entry in field_outputs],
+            config.get("field", {}),
+        )
+
+        pair_results: dict[str, Any] = {}
+        raw_compactness_values: list[float] = []
+        raw_outside_values: list[float] = []
+        raw_uncertainty_values: list[float] = []
+        constrained_compactness_values: list[float] = []
+        constrained_outside_values: list[float] = []
+        constrained_uncertainty_values: list[float] = []
+        constrained_binaries: dict[str, np.ndarray] = {}
+        constrained_fractions: dict[str, float] = {}
+
+        for field_output in field_outputs:
+            field_pair = field_output["pair"]
+            plain_probs = field_output["plain_probs"]
+            plain_uncertainty = field_output["plain_uncertainty"]
+            hybrid_probs = field_output["hybrid_probs"]
+            hybrid_uncertainty = field_output["hybrid_uncertainty"]
+            hybrid_metrics = _evaluate_field_prediction(hybrid_probs, hybrid_uncertainty, field_pair.reservoir_mask)
             constrained_binary, constraint_metadata = _postprocess_field_prediction(
-                hybrid_probs[0],
-                hybrid_uncertainty[0],
+                hybrid_probs,
+                hybrid_uncertainty,
                 field_pair.reservoir_mask,
                 config.get("field", {}),
+                shared_context=shared_context,
             )
             constrained_metrics = _summarize_field_binary(
                 constrained_binary,
-                hybrid_uncertainty[0],
+                hybrid_uncertainty,
                 field_pair.reservoir_mask,
             )
             pair_results[field_pair.name] = {
-                "plain_ml": _evaluate_field_prediction(plain_probs[0], plain_uncertainty[0], field_pair.reservoir_mask),
+                "plain_ml": _evaluate_field_prediction(plain_probs, plain_uncertainty, field_pair.reservoir_mask),
                 "hybrid_ml": hybrid_metrics,
                 "hybrid_ml_constrained": {
                     **constrained_metrics,
@@ -749,8 +847,8 @@ def evaluate(config: dict[str, Any]) -> dict[str, Any]:
                 _save_prediction_figure(
                     field_pair.baseline,
                     field_pair.monitor,
-                    hybrid_probs[0],
-                    hybrid_uncertainty[0],
+                    hybrid_probs,
+                    hybrid_uncertainty,
                     None,
                     dirs["figures"] / f"field_{field_pair.name}_hybrid_example.png",
                     title=f"Field-style hybrid prediction: {field_pair.name}",
@@ -759,7 +857,7 @@ def evaluate(config: dict[str, Any]) -> dict[str, Any]:
                     field_pair.baseline,
                     field_pair.monitor,
                     constrained_binary.astype(np.float32),
-                    hybrid_uncertainty[0],
+                    hybrid_uncertainty,
                     None,
                     dirs["figures"] / f"field_{field_pair.name}_hybrid_constrained.png",
                     title=f"Field-style constrained hybrid prediction: {field_pair.name}",
