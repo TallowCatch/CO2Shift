@@ -98,7 +98,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "jax": {
         "enabled": False,
         "device": "cpu",
-        "dtype": "float32",
+        "dtype": "float64",
         "grid_shape": [64, 64],
         "num_steps": 96,
         "dt": 0.001,
@@ -110,6 +110,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "batch_size": 3,
         "velocity_range": [1.8, 2.4],
         "snapshot_steps": [0, 24, 48, 72, 95],
+        "objective": "wavefield_misfit",
+        "target_perturbation_center": [0.16, 0.0],
+        "target_perturbation_sigma": [0.05, 0.14],
+        "target_perturbation_strength": 0.15,
+        "gradient_check_epsilons": [1e-1, 3e-2, 1e-2, 3e-3, 1e-3],
+        "min_gradient_l2_norm": 1e-14,
+        "max_gradient_check_relative_error": 5e-2,
     },
     "volume": {
         "enabled": False,

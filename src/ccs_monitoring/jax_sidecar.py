@@ -42,6 +42,8 @@ def benchmark_jax_wave_lab(config: dict[str, Any]) -> dict[str, Any]:
     receiver_depth = int(jax_cfg["receiver_depth"])
 
     dtype_name = str(jax_cfg.get("dtype", "float32")).lower()
+    if dtype_name == "float64":
+        jax.config.update("jax_enable_x64", True)
     dtype_np = np.float32 if dtype_name == "float32" else np.float64
     dtype_jnp = jnp.float32 if dtype_name == "float32" else jnp.float64
 
@@ -50,6 +52,14 @@ def benchmark_jax_wave_lab(config: dict[str, Any]) -> dict[str, Any]:
 
     velocity_np = _build_velocity_model((nz, nx), jax_cfg["velocity_range"], dtype=dtype_np)
     velocity = jnp.asarray(velocity_np, dtype=dtype_jnp)
+    target_velocity_np = _build_target_velocity_model(
+        velocity_np,
+        center=jax_cfg["target_perturbation_center"],
+        sigma=jax_cfg["target_perturbation_sigma"],
+        strength=float(jax_cfg["target_perturbation_strength"]),
+        dtype=dtype_np,
+    )
+    target_velocity = jnp.asarray(target_velocity_np, dtype=dtype_jnp)
     batch_np = np.stack(
         [
             velocity_np * (1.0 + 0.03 * offset)
@@ -115,17 +125,52 @@ def benchmark_jax_wave_lab(config: dict[str, Any]) -> dict[str, Any]:
 
     jax_wavefields_np = np.asarray(jax_wavefields_jit_cached)
     batch_wavefields_np = np.asarray(batch_wavefields)
+    target_wavefields = simulate_jax_jit(target_velocity)
+    jax.block_until_ready(target_wavefields)
+    target_wavefields_np = np.asarray(target_wavefields)
 
-    loss_fn = lambda velocity_model: jnp.mean(simulate_jax_jit(velocity_model)[-8:, receiver_depth, :] ** 2)
+    objective_name = str(jax_cfg.get("objective", "wavefield_misfit"))
+    if objective_name != "wavefield_misfit":
+        raise ValueError(f"Unsupported JAX objective '{objective_name}'.")
+
+    loss_fn = lambda velocity_model: jnp.mean((simulate_jax_jit(velocity_model) - target_wavefields) ** 2)
+    loss_value = float(loss_fn(velocity))
     gradient = np.asarray(jax.grad(loss_fn)(velocity))
+    gradient_check = _run_directional_gradient_check(
+        jax=jax,
+        jnp=jnp,
+        loss_fn=loss_fn,
+        velocity=velocity,
+        gradient=gradient,
+        epsilons=jax_cfg["gradient_check_epsilons"],
+    )
+    gradient_l2_norm = float(np.linalg.norm(gradient))
+    gradient_max_abs = float(np.max(np.abs(gradient)))
+    min_gradient_l2_norm = float(jax_cfg["min_gradient_l2_norm"])
+    max_gradient_check_relative_error = float(jax_cfg["max_gradient_check_relative_error"])
+    if gradient_l2_norm < min_gradient_l2_norm:
+        raise ValueError(
+            "JAX gradient audit failed: gradient norm is too small for a meaningful check. "
+            f"Observed {gradient_l2_norm:.3e}, expected at least {min_gradient_l2_norm:.3e}."
+        )
+    if float(gradient_check["best_relative_error"]) > max_gradient_check_relative_error:
+        raise ValueError(
+            "JAX gradient audit failed: directional finite-difference agreement is too weak. "
+            f"Observed {float(gradient_check['best_relative_error']):.3e}, "
+            f"threshold {max_gradient_check_relative_error:.3e}."
+        )
     max_abs_error = float(np.max(np.abs(jax_wavefields_np - numpy_wavefields)))
+    reference_peak_abs = float(np.max(np.abs(numpy_wavefields)))
+    relative_max_abs_error = float(max_abs_error / max(reference_peak_abs, 1e-30))
 
     snapshot_steps = [min(num_steps - 1, int(step)) for step in jax_cfg["snapshot_steps"]]
     snapshot_path = figures_dir / "jax_wavefield_snapshots.png"
     gradient_path = figures_dir / "jax_gradient_sanity.png"
+    gradient_check_path = figures_dir / "jax_gradient_check.png"
     animation_path = figures_dir / "jax_wavefield_animation.gif"
     _save_wavefield_snapshots(jax_wavefields_np, snapshot_steps, snapshot_path)
     _save_gradient_plot(gradient, gradient_path)
+    _save_gradient_check_plot(gradient_check, gradient_check_path)
     _save_wavefield_animation(jax_wavefields_np, animation_path)
 
     runtime_rows = [
@@ -139,12 +184,17 @@ def benchmark_jax_wave_lab(config: dict[str, Any]) -> dict[str, Any]:
 
     summary = {
         "device": str(jax_cfg["device"]),
+        "dtype": dtype_name,
         "grid_shape": [nz, nx],
         "num_steps": num_steps,
         "source_index": list(source_index),
         "batch_size": batch_size,
         "receiver_depth": receiver_depth,
+        "objective": objective_name,
+        "loss_value": loss_value,
         "max_abs_error_vs_numpy": max_abs_error,
+        "relative_max_abs_error_vs_numpy": relative_max_abs_error,
+        "reference_peak_abs_amplitude": reference_peak_abs,
         "numpy_runtime_seconds": float(numpy_runtime),
         "jax_eager_runtime_seconds": float(jax_eager_runtime),
         "jax_jit_first_call_seconds": float(jax_jit_first_runtime),
@@ -152,9 +202,20 @@ def benchmark_jax_wave_lab(config: dict[str, Any]) -> dict[str, Any]:
         "jax_vmap_batch_seconds": float(jax_vmap_runtime),
         "snapshot_path": str(snapshot_path),
         "gradient_path": str(gradient_path),
+        "gradient_check_path": str(gradient_check_path),
         "animation_path": str(animation_path),
         "batch_wavefields_shape": list(batch_wavefields_np.shape),
         "eager_wavefields_shape": list(jax_wavefields_eager_np.shape),
+        "target_wavefields_shape": list(target_wavefields_np.shape),
+        "target_perturbation_center": list(jax_cfg["target_perturbation_center"]),
+        "target_perturbation_sigma": list(jax_cfg["target_perturbation_sigma"]),
+        "target_perturbation_strength": float(jax_cfg["target_perturbation_strength"]),
+        "gradient_l2_norm": gradient_l2_norm,
+        "gradient_max_abs": gradient_max_abs,
+        "gradient_check_passed": True,
+        "min_gradient_l2_norm": min_gradient_l2_norm,
+        "max_gradient_check_relative_error": max_gradient_check_relative_error,
+        "gradient_check": gradient_check,
     }
     (results_dir / "jax_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     return summary
@@ -178,16 +239,36 @@ def _build_velocity_model(shape: tuple[int, int], velocity_range: list[float], *
     return velocity.astype(dtype)
 
 
-def _build_damping_mask_numpy(shape: tuple[int, int], width: int = 10) -> np.ndarray:
+def _build_target_velocity_model(
+    velocity: np.ndarray,
+    *,
+    center: list[float],
+    sigma: list[float],
+    strength: float,
+    dtype: Any,
+) -> np.ndarray:
+    nz, nx = velocity.shape
+    z_axis = np.linspace(0.0, 1.0, nz, dtype=dtype)[:, None]
+    x_axis = np.linspace(-1.0, 1.0, nx, dtype=dtype)[None, :]
+    perturbation = strength * np.exp(
+        -(
+            ((z_axis - dtype(center[0])) ** 2) / max(dtype(sigma[0]) ** 2, dtype(1e-6))
+            + ((x_axis - dtype(center[1])) ** 2) / max(dtype(sigma[1]) ** 2, dtype(1e-6))
+        )
+    )
+    return (velocity * (1.0 - perturbation)).astype(dtype)
+
+
+def _build_damping_mask_numpy(shape: tuple[int, int], width: int = 10, *, dtype: Any = np.float32) -> np.ndarray:
     nz, nx = shape
-    damping = np.ones((nz, nx), dtype=np.float32)
+    damping = np.ones((nz, nx), dtype=dtype)
     for index in range(width):
         scale = np.exp(-((width - index) / width) ** 2 * 0.12)
         damping[index, :] *= scale
         damping[-(index + 1), :] *= scale
         damping[:, index] *= scale
         damping[:, -(index + 1)] *= scale
-    return damping.astype(np.float32)
+    return damping.astype(dtype)
 
 
 def _build_damping_mask_jax(shape: tuple[int, int], dtype: Any) -> Any:
@@ -226,10 +307,10 @@ def _simulate_numpy(
     dz: float,
 ) -> np.ndarray:
     coeff = (velocity**2) * (dt**2)
-    prev_wave = np.zeros_like(velocity, dtype=np.float32)
-    current_wave = np.zeros_like(velocity, dtype=np.float32)
-    damping = _build_damping_mask_numpy(velocity.shape)
-    wavefields = np.zeros((len(source_wavelet), *velocity.shape), dtype=np.float32)
+    prev_wave = np.zeros_like(velocity, dtype=velocity.dtype)
+    current_wave = np.zeros_like(velocity, dtype=velocity.dtype)
+    damping = _build_damping_mask_numpy(velocity.shape, dtype=velocity.dtype)
+    wavefields = np.zeros((len(source_wavelet), *velocity.shape), dtype=velocity.dtype)
     for step_index, source_amp in enumerate(source_wavelet):
         laplace = _laplacian_numpy(current_wave, dx, dz)
         next_wave = 2.0 * current_wave - prev_wave + coeff * laplace
@@ -289,3 +370,83 @@ def _write_runtime_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         writer = csv.DictWriter(handle, fieldnames=["method", "runtime_seconds"])
         writer.writeheader()
         writer.writerows(rows)
+
+
+def _run_directional_gradient_check(
+    *,
+    jax: Any,
+    jnp: Any,
+    loss_fn: Any,
+    velocity: Any,
+    gradient: np.ndarray,
+    epsilons: list[float],
+) -> dict[str, Any]:
+    direction = gradient.astype(np.float64, copy=False)
+    direction_norm = float(np.linalg.norm(direction))
+    if direction_norm <= 0.0:
+        raise ValueError("Directional gradient check received a zero gradient.")
+    direction = direction / direction_norm
+
+    analytic_directional = float(np.sum(gradient * direction))
+    base_velocity = np.asarray(velocity, dtype=direction.dtype)
+    checks: list[dict[str, float]] = []
+
+    for epsilon in epsilons:
+        plus_velocity = jnp.asarray(base_velocity + epsilon * direction)
+        minus_velocity = jnp.asarray(base_velocity - epsilon * direction)
+        plus_loss = loss_fn(plus_velocity)
+        minus_loss = loss_fn(minus_velocity)
+        jax.block_until_ready(plus_loss)
+        jax.block_until_ready(minus_loss)
+        finite_difference = float((plus_loss - minus_loss) / (2.0 * epsilon))
+        relative_error = float(
+            abs(finite_difference - analytic_directional) / max(abs(finite_difference), abs(analytic_directional), 1e-30)
+        )
+        checks.append(
+            {
+                "epsilon": float(epsilon),
+                "analytic_directional_derivative": analytic_directional,
+                "finite_difference_directional_derivative": finite_difference,
+                "absolute_error": float(abs(finite_difference - analytic_directional)),
+                "relative_error": relative_error,
+            }
+        )
+
+    best_check = min(checks, key=lambda item: item["relative_error"])
+    return {
+        "direction_mode": "gradient",
+        "direction_l2_norm": float(np.linalg.norm(direction)),
+        "analytic_directional_derivative": analytic_directional,
+        "checks": checks,
+        "best_epsilon": float(best_check["epsilon"]),
+        "best_absolute_error": float(best_check["absolute_error"]),
+        "best_relative_error": float(best_check["relative_error"]),
+    }
+
+
+def _save_gradient_check_plot(gradient_check: dict[str, Any], destination: Path) -> None:
+    checks = gradient_check["checks"]
+    epsilons = [entry["epsilon"] for entry in checks]
+    finite_difference = [entry["finite_difference_directional_derivative"] for entry in checks]
+    analytic = [entry["analytic_directional_derivative"] for entry in checks]
+    errors = [entry["relative_error"] for entry in checks]
+
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+    axes[0].plot(epsilons, finite_difference, marker="o", label="Finite difference")
+    axes[0].plot(epsilons, analytic, marker="x", linestyle="--", label="Analytic")
+    axes[0].set_xscale("log")
+    axes[0].set_title("Directional derivative check")
+    axes[0].set_xlabel("epsilon")
+    axes[0].set_ylabel("directional derivative")
+    axes[0].legend()
+
+    axes[1].plot(epsilons, errors, marker="o", color="tab:red")
+    axes[1].set_xscale("log")
+    axes[1].set_yscale("log")
+    axes[1].set_title("Relative error vs epsilon")
+    axes[1].set_xlabel("epsilon")
+    axes[1].set_ylabel("relative error")
+
+    fig.tight_layout()
+    fig.savefig(destination, dpi=180, bbox_inches="tight")
+    plt.close(fig)
