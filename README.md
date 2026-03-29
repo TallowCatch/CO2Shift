@@ -4,6 +4,7 @@ This repository implements a practical first-paper pipeline for reliable 4D CCS 
 
 - a synthetic benchmark with geology shift and survey mismatch
 - simple classical baselines
+- a cross-equalized difference baseline that uses the non-reservoir interval as a repeatability reference
 - a plain ML segmentation baseline
 - a hybrid ML model with physics-inspired channels and calibrated uncertainty
 - synthetic and field-style evaluation utilities

@@ -23,6 +23,7 @@ from torch.utils.data import DataLoader, Dataset
 from .baselines import (
     apply_threshold,
     fit_best_threshold,
+    score_cross_equalized_difference,
     score_difference,
     score_impedance_difference,
 )
@@ -510,6 +511,28 @@ def _postprocess_field_prediction(
     if uncertainty_threshold is not None:
         binary &= uncertainty <= uncertainty_threshold
 
+    binary, cleanup_metadata = _cleanup_field_binary(binary, reservoir_mask, field_cfg)
+
+    metadata = {
+        "enabled": True,
+        "threshold_mode": threshold_mode,
+        "probability_threshold": float(probability_threshold),
+        "uncertainty_threshold": uncertainty_threshold,
+        "threshold_source": threshold_source,
+        "shared_across_pairs": bool(post_cfg.get("shared_across_pairs", False)),
+        **cleanup_metadata,
+    }
+    return binary.astype(bool), metadata
+
+
+def _cleanup_field_binary(
+    binary: np.ndarray,
+    reservoir_mask: np.ndarray | None,
+    field_cfg: dict[str, Any],
+) -> tuple[np.ndarray, dict[str, Any]]:
+    post_cfg = field_cfg.get("postprocess", {})
+    binary = binary.astype(bool, copy=True)
+
     if post_cfg.get("apply_reservoir_mask", True) and reservoir_mask is not None:
         binary &= reservoir_mask > 0.5
 
@@ -543,12 +566,6 @@ def _postprocess_field_prediction(
         binary = binary.astype(bool)
 
     metadata = {
-        "enabled": True,
-        "threshold_mode": threshold_mode,
-        "probability_threshold": float(probability_threshold),
-        "uncertainty_threshold": uncertainty_threshold,
-        "threshold_source": threshold_source,
-        "shared_across_pairs": bool(post_cfg.get("shared_across_pairs", False)),
         "applied_reservoir_mask": bool(post_cfg.get("apply_reservoir_mask", True) and reservoir_mask is not None),
         "closing_iterations": closing_iterations,
         "opening_iterations": opening_iterations,
@@ -712,8 +729,20 @@ def evaluate(config: dict[str, Any]) -> dict[str, Any]:
         [score_impedance_difference(b, m) for b, m in zip(bundle.val["baseline"], bundle.val["monitor"])],
         axis=0,
     )
+    val_cross_equalized_scores = np.stack(
+        [
+            score_cross_equalized_difference(b, m, reservoir_mask)
+            for b, m, reservoir_mask in zip(
+                bundle.val["baseline"],
+                bundle.val["monitor"],
+                bundle.val["reservoir_mask"],
+            )
+        ],
+        axis=0,
+    )
     diff_threshold = fit_best_threshold(val_diff_scores, bundle.val["change_mask"])
     impedance_threshold = fit_best_threshold(val_impedance_scores, bundle.val["change_mask"])
+    cross_equalized_threshold = fit_best_threshold(val_cross_equalized_scores, bundle.val["change_mask"])
 
     plain_artifact = _load_model_artifact(dirs["models"] / "plain.pt", in_channels=2)
     hybrid_artifact = _load_model_artifact(dirs["models"] / "hybrid.pt", in_channels=6)
@@ -723,6 +752,7 @@ def evaluate(config: dict[str, Any]) -> dict[str, Any]:
         "classical_thresholds": {
             "difference": diff_threshold,
             "impedance": impedance_threshold,
+            "cross_equalized_difference": cross_equalized_threshold,
         }
     }
 
@@ -735,8 +765,16 @@ def evaluate(config: dict[str, Any]) -> dict[str, Any]:
             [score_impedance_difference(b, m) for b, m in zip(split["baseline"], split["monitor"])],
             axis=0,
         )
+        cross_equalized_scores = np.stack(
+            [
+                score_cross_equalized_difference(b, m, reservoir_mask)
+                for b, m, reservoir_mask in zip(split["baseline"], split["monitor"], split["reservoir_mask"])
+            ],
+            axis=0,
+        )
         diff_predictions = apply_threshold(diff_scores, diff_threshold)
         impedance_predictions = apply_threshold(impedance_scores, impedance_threshold)
+        cross_equalized_predictions = apply_threshold(cross_equalized_scores, cross_equalized_threshold)
 
         plain_inputs, _ = _build_inputs(split, hybrid=False)
         hybrid_inputs, _ = _build_inputs(split, hybrid=True)
@@ -764,6 +802,12 @@ def evaluate(config: dict[str, Any]) -> dict[str, Any]:
                 impedance_predictions,
                 targets,
                 np.zeros_like(impedance_predictions),
+                config["evaluation"],
+            ),
+            "cross_equalized_difference": _evaluate_predictions(
+                cross_equalized_predictions,
+                targets,
+                np.zeros_like(cross_equalized_predictions),
                 config["evaluation"],
             ),
             "plain_ml": _evaluate_predictions(plain_probs, targets, plain_uncertainty, config["evaluation"]),
@@ -858,6 +902,17 @@ def evaluate(config: dict[str, Any]) -> dict[str, Any]:
             plain_uncertainty = field_output["plain_uncertainty"]
             hybrid_probs = field_output["hybrid_probs"]
             hybrid_uncertainty = field_output["hybrid_uncertainty"]
+            cross_equalized_scores = score_cross_equalized_difference(
+                field_pair.baseline,
+                field_pair.monitor,
+                field_pair.reservoir_mask,
+            )
+            cross_equalized_binary = apply_threshold(cross_equalized_scores[None, ...], cross_equalized_threshold)[0] > 0.5
+            cross_equalized_structured, cross_equalized_cleanup = _cleanup_field_binary(
+                cross_equalized_binary,
+                field_pair.reservoir_mask,
+                config.get("field", {}),
+            )
             hybrid_metrics = _evaluate_field_prediction(hybrid_probs, hybrid_uncertainty, field_pair.reservoir_mask)
             constrained_binary, constraint_metadata = _postprocess_field_prediction(
                 hybrid_probs,
@@ -873,6 +928,23 @@ def evaluate(config: dict[str, Any]) -> dict[str, Any]:
             )
             support_metrics = _trace_support_metrics(constrained_binary, plume_support_traces)
             pair_results[field_pair.name] = {
+                "cross_equalized_difference": {
+                    **_summarize_field_binary(
+                        cross_equalized_structured,
+                        np.zeros_like(cross_equalized_scores, dtype=np.float32),
+                        field_pair.reservoir_mask,
+                    ),
+                    **_trace_support_metrics(cross_equalized_structured, plume_support_traces),
+                    "constraint_metadata": {
+                        "enabled": True,
+                        "threshold_mode": "synthetic_validation_threshold",
+                        "probability_threshold": float(cross_equalized_threshold),
+                        "uncertainty_threshold": None,
+                        "threshold_source": "synthetic_validation_threshold",
+                        "shared_across_pairs": True,
+                        **cross_equalized_cleanup,
+                    },
+                },
                 "plain_ml": _evaluate_field_prediction(plain_probs, plain_uncertainty, field_pair.reservoir_mask),
                 "hybrid_ml": hybrid_metrics,
                 "hybrid_ml_constrained": {
@@ -898,6 +970,15 @@ def evaluate(config: dict[str, Any]) -> dict[str, Any]:
             constrained_support_iou[field_pair.name] = float(support_metrics.get("trace_iou_with_2010_support", float("nan")))
 
             if config["evaluation"]["save_figures"]:
+                _save_prediction_figure(
+                    field_pair.baseline,
+                    field_pair.monitor,
+                    cross_equalized_structured.astype(np.float32),
+                    np.zeros_like(cross_equalized_scores, dtype=np.float32),
+                    None,
+                    dirs["figures"] / f"field_{field_pair.name}_cross_equalized_difference.png",
+                    title=f"Field cross-equalized difference: {field_pair.name}",
+                )
                 _save_prediction_figure(
                     field_pair.baseline,
                     field_pair.monitor,
