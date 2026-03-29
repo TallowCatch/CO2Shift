@@ -1,0 +1,27 @@
+seed: 13
+output_root: runs/jax_wave_lab
+
+jax:
+  enabled: true
+  device: cpu
+  dtype: float32
+  grid_shape: [72, 88]
+  num_steps: 96
+  dt: 0.001
+  dx: 10.0
+  dz: 10.0
+  source_frequency: 12.0
+  source_index: [8, 44]
+  receiver_depth: 12
+  batch_size: 3
+  velocity_range: [1.8, 2.5]
+  snapshot_steps: [0, 24, 48, 72, 95]
+
+hpc:
+  launcher: local
+  num_workers: 1
+  threads_per_worker: 4
+  job_name: jax-wave-lab
+
+report:
+  title: "CO2Shift JAX wave-propagation sidecar"

@@ -8,14 +8,21 @@ This repository implements a practical first-paper pipeline for reliable 4D CCS 
 - a plain ML segmentation baseline
 - a hybrid ML model with physics-inspired channels and calibrated uncertainty
 - synthetic and field-style evaluation utilities
+- a paper evidence-pack workflow for publication tables and figures
+- a JAX sidecar wave-propagation sandbox
+- a chunked volume builder for 3D/4D-style outputs
+- a portable HTML and GIF rendering path for stacked field vintages
 
 The current implementation is designed to run without downloading the large public datasets during bootstrap. It can:
 
 - generate a Kimberlina-style synthetic benchmark locally
 - train and evaluate baselines end-to-end
 - optionally run inference on held-out `.npy` or `.npz` field arrays
-- produce figures and a Markdown summary for paper iteration
 - produce figures and machine-readable summaries for paper iteration
+- build a paper-facing evidence pack from saved runs
+- build a chunked `xarray`/`zarr` volume from stacked field predictions
+- render self-contained Plotly HTML viewers and GIF animations
+- benchmark a small JAX wave-propagation sandbox on CPU
 
 ## Quick start
 
@@ -32,6 +39,8 @@ python3 -m pip install -e . --no-deps --no-build-isolation
 In this environment the local user site was not writable, so `PYTHONPATH=src` is the most reliable bootstrap path.
 
 If `torch` hits the local OpenMP issue seen in this environment, the package sets `KMP_DUPLICATE_LIB_OK=TRUE` automatically at runtime.
+
+If the repo-local `.vendor/` directory exists, the package adds it to `sys.path` automatically on import. That is how the optional JAX, Plotly, `zarr`, and `segyio` dependencies are used in this workspace without modifying the system Python.
 
 ## Data interface
 
@@ -83,6 +92,10 @@ PYTHONPATH=src python3 -m ccs_monitoring.cli evaluate --config configs/smoke.yam
 PYTHONPATH=src python3 -m ccs_monitoring.cli run-all --config configs/smoke.yaml
 PYTHONPATH=src python3 -m ccs_monitoring.cli validate-field --config configs/sleipner_manifest.yaml
 PYTHONPATH=.vendor:src python3 -m ccs_monitoring.cli export-sleipner-inline --config configs/sleipner_manifest.yaml
+PYTHONPATH=src python3 -m ccs_monitoring.cli build-paper-evidence --config configs/paper_evidence.yaml
+PYTHONPATH=src python3 -m ccs_monitoring.cli build-volume --config configs/sleipner_volume.yaml
+PYTHONPATH=src python3 -m ccs_monitoring.cli render-4d --config configs/sleipner_volume.yaml
+PYTHONPATH=src python3 -m ccs_monitoring.cli benchmark-jax --config configs/jax_wave_lab.yaml
 ```
 
 For the real Sleipner workflow, `export-sleipner-inline` writes a `.npy` section for the configured `field.inline_number`.
@@ -98,6 +111,14 @@ The repo is structured so we can later plug in:
 
 The first paper scope intentionally stays narrower than direct `Q` inversion.
 
+## New next-phase configs
+
+- [`configs/paper_evidence.yaml`](/Users/ameerfiras/Propagation/configs/paper_evidence.yaml): builds the paper-facing tables, ablations, and final direct-2010 panel
+- [`configs/sleipner_volume.yaml`](/Users/ameerfiras/Propagation/configs/sleipner_volume.yaml): builds a stacked field volume and renders 4D-style HTML/GIF outputs
+- [`configs/jax_wave_lab.yaml`](/Users/ameerfiras/Propagation/configs/jax_wave_lab.yaml): runs the CPU JAX sidecar benchmark
+
+Local run helpers live in `jobs/`, including local shell wrappers and a SLURM-style template.
+
 ## Outputs
 
 After `run-all`, the default output tree contains:
@@ -107,3 +128,14 @@ After `run-all`, the default output tree contains:
 - `runs/<name>/results/metrics.json`: machine-readable metrics
 - `runs/<name>/results/summary.json`: a compact run summary
 - `runs/<name>/results/figures`: sample qualitative figures
+
+Additional next-phase outputs:
+
+- `runs/paper_evidence/results/paper_evidence_summary.json`
+- `runs/paper_evidence/results/paper_ablation_table.csv`
+- `runs/paper_evidence/results/figures/paper_direct_2010_panel.png`
+- `runs/sleipner_volume/volume.zarr`
+- `runs/sleipner_volume/results/visualization/slice_browser.html`
+- `runs/sleipner_volume/results/visualization/support_evolution.gif`
+- `runs/jax_wave_lab/results/jax_summary.json`
+- `runs/jax_wave_lab/results/figures/jax_wavefield_animation.gif`

@@ -1,0 +1,58 @@
+seed: 11
+output_root: runs/sleipner_volume
+artifacts_root: runs/sleipner_manifest
+
+training:
+  device: cpu
+  mc_dropout_passes: 8
+
+field:
+  enabled: true
+  mode: manifest
+  manifest_path: examples/sleipner_manifest.real.json
+  plume_support_path: examples/exports/sleipner_2010_plume_support_traces.npy
+  plume_support_note: "2010 plume-boundary support is used as a later-time structural envelope, not as exact ground truth for the earlier 2001/2004/2006 vintages."
+  postprocess:
+    enabled: true
+    threshold_mode: quantile
+    probability_quantile: 0.92
+    min_probability_threshold: 0.5
+    uncertainty_quantile: 0.85
+    shared_across_pairs: true
+    shared_use_reservoir_region: true
+    apply_reservoir_mask: true
+    closing_iterations: 1
+    opening_iterations: 1
+    min_component_size: 400
+    keep_largest_components: 3
+
+volume:
+  enabled: true
+  output_store: runs/sleipner_volume/volume.zarr
+  vintages:
+    - sleipner_2001_inline_1840_mid
+    - sleipner_2004_inline_1840_mid
+    - sleipner_2006_inline_1840_mid
+  chunking:
+    vintage: 1
+    sample: 256
+    trace: 128
+
+hpc:
+  launcher: local
+  num_workers: 1
+  threads_per_worker: 4
+  job_name: sleipner-volume
+
+visualization:
+  enabled: true
+  mode: plotly
+  colormap: Viridis
+  opacity: 0.18
+  output_dir: runs/sleipner_volume/results/visualization
+  animation_variable: constrained_support
+  volume_variable: constrained_support
+  uncertainty_variable: uncertainty
+
+report:
+  title: "CO2Shift stacked field volume and 4D visuals"

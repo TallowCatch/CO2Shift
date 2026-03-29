@@ -18,6 +18,17 @@ dependencies = [
   "torch>=2.0",
 ]
 
+[project.optional-dependencies]
+jax = [
+  "jax>=0.9",
+  "jaxlib>=0.9",
+]
+viz = [
+  "imageio>=2.37",
+  "plotly>=6.0",
+  "zarr>=3.1",
+]
+
 [project.scripts]
 ccs-monitor = "ccs_monitoring.cli:main"
 

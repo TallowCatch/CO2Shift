@@ -9,12 +9,16 @@ import os
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 from .config import load_config
+from .jax_sidecar import benchmark_jax_wave_lab
+from .paper import build_paper_evidence
 from .pipeline import evaluate, generate, run_all, train, validate_field_setup
 from .sleipner import (
     export_sleipner_inline_section,
     export_sleipner_plume_support_traces,
     export_sleipner_storage_interval_mask,
 )
+from .visualization import render_4d
+from .volume import build_volume
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -29,6 +33,10 @@ def _build_parser() -> argparse.ArgumentParser:
         ("export-sleipner-inline", "Export a normalized Sleipner inline section to .npy"),
         ("build-sleipner-mask", "Build a storage-interval mask from Sleipner benchmark surfaces"),
         ("build-sleipner-plume-support", "Build a 2010 plume-support trace mask from Sleipner benchmark polygons"),
+        ("build-paper-evidence", "Build a paper-facing evidence pack from saved runs"),
+        ("benchmark-jax", "Run the JAX sidecar wave-propagation sandbox"),
+        ("build-volume", "Build a chunked volume store from field predictions"),
+        ("render-4d", "Render HTML and GIF 4D-style outputs from a chunked volume store"),
     ):
         subparser = subparsers.add_parser(command, help=help_text)
         subparser.add_argument("--config", required=True, help="Path to YAML config file")
@@ -121,6 +129,14 @@ def main() -> None:
             inline_number=inline_number,
             output_support_path=output_support_path,
         )
+    elif args.command == "build-paper-evidence":
+        result = build_paper_evidence(config)
+    elif args.command == "benchmark-jax":
+        result = benchmark_jax_wave_lab(config)
+    elif args.command == "build-volume":
+        result = build_volume(config)
+    elif args.command == "render-4d":
+        result = render_4d(config)
     else:
         raise ValueError(f"Unsupported command: {args.command}")
 

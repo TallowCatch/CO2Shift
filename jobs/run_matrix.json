@@ -1,0 +1,28 @@
+{
+  "runs": [
+    {
+      "name": "paper_evidence",
+      "launcher": "local",
+      "config": "configs/paper_evidence.yaml",
+      "command": "build-paper-evidence"
+    },
+    {
+      "name": "sleipner_volume_build",
+      "launcher": "local",
+      "config": "configs/sleipner_volume.yaml",
+      "command": "build-volume"
+    },
+    {
+      "name": "sleipner_volume_render",
+      "launcher": "local",
+      "config": "configs/sleipner_volume.yaml",
+      "command": "render-4d"
+    },
+    {
+      "name": "jax_wave_lab",
+      "launcher": "local",
+      "config": "configs/jax_wave_lab.yaml",
+      "command": "benchmark-jax"
+    }
+  ]
+}
