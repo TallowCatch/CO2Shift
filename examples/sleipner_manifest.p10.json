@@ -1,0 +1,10 @@
+{
+  "baseline": "exports/sleipner_1994_baseline_p10.npy",
+  "reservoir_mask": "exports/sleipner_storage_interval_mask_p10.npy",
+  "pairs": [
+    {
+      "name": "sleipner_2010_inline_1840_p10_mid",
+      "monitor": "exports/sleipner_2010_monitor_p10.npy"
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+seed: 11
+output_root: runs/sleipner_manifest_p10
+artifacts_root: runs/sleipner_manifest
+
+field:
+  enabled: true
+  mode: manifest
+  path: ""
+  manifest_path: examples/sleipner_manifest.p10.json
+  benchmark_root: /tmp/sleipner_benchmark/extract/velocities_trends_surfaces/data
+  plume_boundaries_root: /tmp/sleipner_benchmark/extract/Sleipner_Plumes_Boundaries/data
+  segy_path: examples/exports/raw/94p10mid.sgy
+  export_segy_path: examples/exports/raw/10p10mid.sgy
+  export_output_path: examples/exports/sleipner_2010_monitor_p10.npy
+  export_normalization_segy_paths:
+    - examples/exports/raw/94p10mid.sgy
+    - examples/exports/raw/10p10mid.sgy
+  inline_number: 1840
+  output_mask_path: examples/exports/sleipner_storage_interval_mask_p10.npy
+  output_plume_support_path: examples/exports/sleipner_2010_plume_support_traces_p10.npy
+  plume_support_path: examples/exports/sleipner_2010_plume_support_traces_p10.npy
+  plume_support_note: "2010 plume-boundary support is a same-year structural benchmark for the 2010 monitor, but it is still a support envelope rather than an exact pixel-level plume label."
+  postprocess:
+    enabled: true
+    threshold_mode: quantile
+    probability_quantile: 0.92
+    min_probability_threshold: 0.5
+    uncertainty_quantile: 0.85
+    shared_across_pairs: true
+    shared_use_reservoir_region: true
+    apply_reservoir_mask: true
+    closing_iterations: 1
+    opening_iterations: 1
+    min_component_size: 400
+    keep_largest_components: 3
+
+evaluation:
+  save_figures: true
+
+report:
+  title: "CO2Shift Sleipner p10 direct 2010 benchmark check"

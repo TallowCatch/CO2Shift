@@ -679,6 +679,13 @@ def _load_bundle(output_root: Path) -> DatasetBundle:
     )
 
 
+def _resolve_artifacts_root(config: dict[str, Any]) -> Path:
+    artifacts_root = str(config.get("artifacts_root", "")).strip()
+    if artifacts_root:
+        return Path(artifacts_root)
+    return Path(config["output_root"])
+
+
 def train(config: dict[str, Any]) -> dict[str, Any]:
     ensure_runtime_environment(config["output_root"], config["seed"])
     output_root = Path(config["output_root"])
@@ -718,8 +725,9 @@ def train(config: dict[str, Any]) -> dict[str, Any]:
 def evaluate(config: dict[str, Any]) -> dict[str, Any]:
     ensure_runtime_environment(config["output_root"], config["seed"])
     output_root = Path(config["output_root"])
+    artifacts_root = _resolve_artifacts_root(config)
     dirs = _prepare_dirs(output_root)
-    bundle = _load_bundle(output_root)
+    bundle = _load_bundle(artifacts_root)
 
     val_diff_scores = np.stack(
         [score_difference(b, m) for b, m in zip(bundle.val["baseline"], bundle.val["monitor"])],
@@ -744,8 +752,8 @@ def evaluate(config: dict[str, Any]) -> dict[str, Any]:
     impedance_threshold = fit_best_threshold(val_impedance_scores, bundle.val["change_mask"])
     cross_equalized_threshold = fit_best_threshold(val_cross_equalized_scores, bundle.val["change_mask"])
 
-    plain_artifact = _load_model_artifact(dirs["models"] / "plain.pt", in_channels=2)
-    hybrid_artifact = _load_model_artifact(dirs["models"] / "hybrid.pt", in_channels=6)
+    plain_artifact = _load_model_artifact(artifacts_root / "models" / "plain.pt", in_channels=2)
+    hybrid_artifact = _load_model_artifact(artifacts_root / "models" / "hybrid.pt", in_channels=6)
     device = torch.device(config["training"].get("device", "cpu"))
 
     results: dict[str, Any] = {
@@ -1058,15 +1066,19 @@ def evaluate(config: dict[str, Any]) -> dict[str, Any]:
                 ),
             }
         if plume_support_traces is not None:
-            results["field"]["support_note"] = (
-                "2010 plume-boundary support is used as a later-time structural envelope, not as exact ground truth "
-                "for earlier vintages."
-            )
+            support_note = str(config.get("field", {}).get("plume_support_note", "")).strip()
+            if not support_note:
+                support_note = (
+                    "2010 plume-boundary support is used as a later-time structural envelope, not as exact ground "
+                    "truth for earlier vintages."
+                )
+            results["field"]["support_note"] = support_note
 
     summary_sections = {
         "Overview": {
             "config_path": config["config_path"],
             "output_root": str(output_root.resolve()),
+            "artifacts_root": str(artifacts_root.resolve()),
         },
         "Thresholds": results["classical_thresholds"],
         "Synthetic Test": results["test"]["hybrid_ml"],
@@ -1092,7 +1104,7 @@ def validate_field_setup(config: dict[str, Any]) -> dict[str, Any]:
 
     split_arrays = None
     if field_cfg.get("mode") == "pseudo_sleipner":
-        ood_path = Path(config["output_root"]) / "data" / "ood.npz"
+        ood_path = _resolve_artifacts_root(config) / "data" / "ood.npz"
         if not ood_path.exists():
             raise FileNotFoundError(
                 f"Pseudo field validation requires generated synthetic data at {ood_path}. "

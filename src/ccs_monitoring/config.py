@@ -12,6 +12,7 @@ import yaml
 DEFAULT_CONFIG: dict[str, Any] = {
     "seed": 7,
     "output_root": "runs/default",
+    "artifacts_root": "",
     "synthetic": {
         "num_train": 256,
         "num_val": 64,
@@ -63,6 +64,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "output_mask_path": "",
         "output_plume_support_path": "",
         "plume_support_path": "",
+        "plume_support_note": "",
         "postprocess": {
             "enabled": False,
             "threshold_mode": "fixed",
