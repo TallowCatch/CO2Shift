@@ -1,0 +1,80 @@
+\begin{thebibliography}{9}
+\providecommand{\natexlab}[1]{#1}
+\providecommand{\url}[1]{\texttt{#1}}
+\expandafter\ifx\csname urlstyle\endcsname\relax
+  \providecommand{\doi}[1]{doi: #1}\else
+  \providecommand{\doi}{doi: \begingroup \urlstyle{rm}\Url}\fi
+
+\bibitem[Alali et~al.(2020)Alali, Kazei, Altaf, Zhang, and
+  Alkhalifah]{alali2020crossequalization}
+A.~Alali, Vladimir Kazei, Basmah Altaf, Xiangliang Zhang, and Tariq~Ali
+  Alkhalifah.
+\newblock Time-lapse cross-equalization by deep learning.
+\newblock In \emph{EAGE 2020 Annual Conference and Exhibition Online}, pages
+  1--5, 2020.
+\newblock \doi{10.3997/2214-4609.202011720}.
+
+\bibitem[Fachtony et~al.(2025)Fachtony, Brossier, Boddupalli, Dupuy,
+  M{\'e}tivier, and Romdhane]{fachtony2025sleipner}
+F.~A. Fachtony, R.~Brossier, B.~Boddupalli, B.~Dupuy, L.~M{\'e}tivier, and
+  A.~Romdhane.
+\newblock {CO2} monitoring at sleipner field using reflection oriented full
+  waveform inversion: Part 2---4d investigation.
+\newblock \emph{Geophysical Journal International}, 242\penalty0 (1):\penalty0
+  ggaf185, 2025.
+\newblock \doi{10.1093/gji/ggaf185}.
+
+\bibitem[Furre et~al.(2017)Furre, Eiken, Alnes, Vevatne, and
+  Ki{\ae}r]{furre2017sleipner}
+Anne-Kari Furre, Ola Eiken, H{\aa}vard Alnes, Jonas~Nesland Vevatne, and
+  Anders~Fredrik Ki{\ae}r.
+\newblock 20 years of monitoring {CO2}-injection at sleipner.
+\newblock \emph{Energy Procedia}, 114:\penalty0 3916--3926, 2017.
+\newblock \doi{10.1016/j.egypro.2017.03.1523}.
+
+\bibitem[Leong et~al.(2024)Leong, Zhu, and Sun]{leong2024seisco2net}
+Zi~Xian Leong, Tieyuan Zhu, and Alexander~Y. Sun.
+\newblock Time-lapse seismic inversion for {CO2} saturation with {SeisCO2Net}:
+  An application to {Frio-II} site.
+\newblock \emph{International Journal of Greenhouse Gas Control}, 132:\penalty0
+  104058, 2024.
+\newblock \doi{10.1016/j.ijggc.2024.104058}.
+
+\bibitem[Li and Li(2021)]{li2021sleipnernn}
+Bei Li and Yunyue~Elita Li.
+\newblock Neural network-based {CO2} interpretation from 4d sleipner seismic
+  images.
+\newblock \emph{Journal of Geophysical Research: Solid Earth}, 126\penalty0
+  (12):\penalty0 e2021JB022524, 2021.
+\newblock \doi{10.1029/2021JB022524}.
+
+\bibitem[Rickett and Lumley(2001)]{rickett2001crossequalization}
+James Rickett and David Lumley.
+\newblock Cross-equalization data processing for time-lapse seismic reservoir
+  monitoring: A case study from the gulf of mexico.
+\newblock \emph{Geophysics}, 66\penalty0 (4):\penalty0 1015--1025, 2001.
+\newblock \doi{10.1190/1.1487049}.
+
+\bibitem[Romero et~al.(2023)Romero, Luiken, and Ravasi]{romero2023joint}
+Juan Romero, Nick Luiken, and Matteo Ravasi.
+\newblock Seeing through the {CO2} plume: Joint inversion-segmentation of the
+  sleipner 4d seismic data set.
+\newblock \emph{The Leading Edge}, 42\penalty0 (7):\penalty0 457--464, 2023.
+\newblock \doi{10.1190/tle42070457.1}.
+
+\bibitem[{SINTEF Industry and
+  Equinor}(2020{\natexlab{a}})]{equinor2020benchmark}
+{SINTEF Industry and Equinor}.
+\newblock Sleipner 2019 benchmark model.
+\newblock \url{https://co2datashare.org/dataset/sleipner-2019-benchmark-model},
+  2020{\natexlab{a}}.
+\newblock CO2DataShare dataset, accessed 2026-03-30.
+
+\bibitem[{SINTEF Industry and Equinor}(2020{\natexlab{b}})]{equinor2020seismic}
+{SINTEF Industry and Equinor}.
+\newblock Sleipner 4d seismic dataset.
+\newblock \url{https://co2datashare.org/dataset/sleipner-4d-seismic-dataset},
+  2020{\natexlab{b}}.
+\newblock CO2DataShare dataset, accessed 2026-03-30.
+
+\end{thebibliography}

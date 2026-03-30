@@ -1,0 +1,313 @@
+\newif\ifuseelsarticle
+\IfFileExists{elsarticle.cls}{%
+  \useelsarticletrue
+  \documentclass[preprint,12pt]{elsarticle}
+}{%
+  \useelsarticlefalse
+  \documentclass[12pt]{article}
+}
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage{float}
+\usepackage{graphicx}
+\usepackage[numbers,sort&compress]{natbib}
+\usepackage{hyperref}
+\usepackage{tikz}
+\usepackage{caption}
+\usepackage{subcaption}
+\usetikzlibrary{positioning,arrows.meta}
+\setlength{\emergencystretch}{2em}
+
+\ifuseelsarticle
+\journal{Journal of Applied Geophysics}
+\biboptions{sort&compress}
+\fi
+
+\begin{document}
+
+\ifuseelsarticle
+\begin{frontmatter}
+
+\title{Structured support mapping on a public pseudo-3D Sleipner benchmark for time-lapse CO$_2$ monitoring}
+
+\author{Ameer Alhashemi}
+\address{University of Birmingham, Birmingham, United Kingdom}
+
+\begin{abstract}
+Public field evaluation of time-lapse seismic change-mapping methods remains limited, particularly for multi-inline assessment. This study asks whether benchmark-constrained pseudo-3D support mapping on public Sleipner data improves on constrained classical baselines while preserving the lateral support learned by per-section machine learning. An eleven-inline benchmark is constructed from the public Sleipner 4D seismic dataset and the Sleipner 2019 benchmark model in two settings: a temporal p07 benchmark for the 1994 to 2001, 2004, and 2006 sequence, and a direct p10 benchmark for a 1994 to 2010 support audit. The evaluation compares constrained classical baselines, plain machine learning, hybrid machine learning, and structured support reconstruction applied to plain machine learning probabilities. On a harder three-seed synthetic benchmark, plain machine learning is more stable than the hybrid model, with Dice of $0.544 \pm 0.008$ on the test split and $0.206 \pm 0.032$ on the out-of-distribution split. On the direct eleven-inline benchmark, structured support reconstruction increases support-volume intersection-over-union from 0.562 to 0.685 while preserving trace-support intersection-over-union at 0.907. On the temporal benchmark, the same method increases support-volume intersection-over-union from 0.300 to 0.438 and crossline continuity from 0.967 to 0.982. The results establish an open pseudo-3D Sleipner benchmark and show that structured support mapping provides a stronger field-facing baseline for time-lapse seismic evaluation on public CO$_2$ monitoring data.
+\end{abstract}
+
+\begin{keyword}
+CO$_2$ storage monitoring \sep time-lapse seismic \sep Sleipner \sep pseudo-3D benchmark \sep machine learning \sep structured support mapping
+\end{keyword}
+
+\end{frontmatter}
+\else
+\title{Structured support mapping on a public pseudo-3D Sleipner benchmark for time-lapse CO$_2$ monitoring}
+\author{Ameer Alhashemi\\University of Birmingham, Birmingham, United Kingdom}
+\date{}
+\maketitle
+
+\begin{abstract}
+Public field evaluation of time-lapse seismic change-mapping methods remains limited, particularly for multi-inline assessment. This study asks whether benchmark-constrained pseudo-3D support mapping on public Sleipner data improves on constrained classical baselines while preserving the lateral support learned by per-section machine learning. An eleven-inline benchmark is constructed from the public Sleipner 4D seismic dataset and the Sleipner 2019 benchmark model in two settings: a temporal p07 benchmark for the 1994 to 2001, 2004, and 2006 sequence, and a direct p10 benchmark for a 1994 to 2010 support audit. The evaluation compares constrained classical baselines, plain machine learning, hybrid machine learning, and structured support reconstruction applied to plain machine learning probabilities. On a harder three-seed synthetic benchmark, plain machine learning is more stable than the hybrid model, with Dice of $0.544 \pm 0.008$ on the test split and $0.206 \pm 0.032$ on the out-of-distribution split. On the direct eleven-inline benchmark, structured support reconstruction increases support-volume intersection-over-union from 0.562 to 0.685 while preserving trace-support intersection-over-union at 0.907. On the temporal benchmark, the same method increases support-volume intersection-over-union from 0.300 to 0.438 and crossline continuity from 0.967 to 0.982. The results establish an open pseudo-3D Sleipner benchmark and show that structured support mapping provides a stronger field-facing baseline for time-lapse seismic evaluation on public CO$_2$ monitoring data.
+\end{abstract}
+
+\noindent\textbf{Keywords.} CO$_2$ storage monitoring; time-lapse seismic; Sleipner; pseudo-3D benchmark; machine learning; structured support mapping
+\fi
+
+\section{Introduction}
+
+Time-lapse seismic data have played a central role in monitoring the Sleipner CO$_2$ storage site for nearly three decades \citep{furre2017sleipner}. The site is important not only because of its long injection history, but also because it has become one of the rare public field datasets where repeated seismic vintages, benchmark reservoir information, and interpreted plume products are available together \citep{equinor2020seismic,equinor2020benchmark}. This makes Sleipner a natural test case for methods that aim to move beyond qualitative difference maps toward more quantitative and reproducible change mapping.
+
+At the same time, Sleipner is a difficult testbed. Repeated surveys are affected by non-repeatability, processing changes, tuning effects, and uncertainty in how seismic response relates to plume geometry \citep{rickett2001crossequalization,alali2020crossequalization,romero2023joint}. Recent work has shown that physics-based inversion and segmentation constraints can improve field interpretation, but the workflow remains demanding and the final field products still depend on strong structural information \citep{romero2023joint,fachtony2025sleipner}. Machine learning studies have also shown promise, including prior work on Sleipner interpretation and site-specific field transfer at other storage sites \citep{li2021sleipnernn,leong2024seisco2net}. However, there is still a gap between simplified synthetic demonstrations and open, field-facing, reproducible pseudo-3D evaluation on public CO$_2$ monitoring data.
+
+This paper addresses that gap with a benchmark-and-method contribution. It constructs a public pseudo-3D Sleipner benchmark from eleven neighboring inlines while keeping the 2007 and 2010 processing families separate. It also defines a benchmark-constrained support mapping procedure that turns per-section predictions into pseudo-3D support volumes suitable for multi-inline evaluation. Within this framework, structured support reconstruction built on plain machine learning yields the strongest field result against the public support proxies and benchmark constraints used here.
+
+The central research question is whether benchmark-constrained pseudo-3D support mapping on public Sleipner data can improve on constrained classical baselines while preserving the lateral support learned by per-section machine learning. On the present benchmark, the clearest positive result is obtained with structured support reconstruction built on plain machine learning. The synthetic and field evaluations place the hybrid model in a secondary role.
+
+\section{Public data and benchmark construction}
+
+\subsection{Public Sleipner data}
+
+All field experiments use public data from the Sleipner 4D Seismic Dataset and the Sleipner 2019 Benchmark Model distributed through CO2DataShare \citep{equinor2020seismic,equinor2020benchmark}. The seismic dataset contains processed 4D seismic cubes from 1994 to 2010 and includes different processing families such as the 2007 and 2010 products. The benchmark model provides the reference simulation grid, velocity trends, reservoir horizons, and plume boundary products that allow public structural constraints to be aligned with the seismic data.
+
+The benchmark construction uses inline exports from the processed seismic cubes. This choice is intentional and is aimed at establishing a transparent pseudo-3D monitoring benchmark from open data.
+
+\subsection{Pseudo-3D benchmark design}
+
+We construct two related but distinct field benchmarks from eleven contiguous inlines centered on inline 1840. The temporal benchmark uses the 2007 processing family and evaluates the 1994 baseline against the 2001, 2004, and 2006 monitor vintages. The direct benchmark uses matched 2010 processing and evaluates the 1994 baseline against the 2010 monitor. These two benchmarks are kept separate throughout the study because mixing processing families would confound temporal interpretation.
+
+For every exported inline pair, we store a normalized baseline section, a normalized monitor section, a storage-interval mask derived from the public benchmark surfaces, a trace-support product based on the public 2010 plume outlines, and a 2D support-volume proxy aligned to the seismic section. The result is a pseudo-3D volume with dimensions inline, vintage, sample, and trace. This arrangement allows crossline continuity to be evaluated explicitly rather than inferred from a single section.
+
+\begin{figure}[H]
+\centering
+\resizebox{0.97\textwidth}{!}{%
+\begin{tikzpicture}[
+  font=\scriptsize,
+  box/.style={
+    draw,
+    rounded corners=3pt,
+    line width=0.6pt,
+    fill=gray!5,
+    align=left,
+    text width=3.95cm,
+    inner sep=8pt,
+    minimum height=6.2cm
+  },
+  flow/.style={-Latex, line width=1.0pt}
+]
+\node[box] (inputs) {
+\textbf{A. Public inputs}\par\medskip
+\textbf{Sleipner 4D seismic dataset}\par
+Processed vintages from 1994 to 2010\par\medskip
+\textbf{Sleipner 2019 benchmark model}\par
+Reservoir surfaces, velocity trends, and plume boundaries\par\medskip
+\textbf{Derived public constraints}\par
+Storage mask\par
+Trace support\par
+Support-volume proxy
+};
+\node[box, right=0.9cm of inputs] (design) {
+\textbf{B. Benchmark design}\par\medskip
+\textbf{Shared spatial setup}\par
+11 inlines centered on inline 1840\\
+(1835 to 1845)\par\medskip
+\textbf{p07 temporal branch}\par
+1994 $\rightarrow$ 2001, 2004, 2006\par
+Single processing family\par
+Support evolution and crossline stability\par\medskip
+\textbf{p10 direct branch}\par
+1994 $\rightarrow$ 2010\par
+Matched processing family\par
+Direct support audit
+};
+\node[box, right=0.9cm of design] (evaluation) {
+\textbf{C. Evaluation}\par\medskip
+\textbf{Per-section methods}\par
+Constrained classical baselines\par
+Plain machine learning\par
+Structured support reconstruction\par\medskip
+\textbf{Pseudo-3D outputs}\par
+Support maps\par
+Support volumes\par\medskip
+\textbf{Field metrics}\par
+Trace-support IoU\par
+Support-volume IoU\par
+Crossline continuity
+};
+\draw[flow, shorten <=2pt, shorten >=2pt] (inputs.east) -- (design.west);
+\draw[flow, shorten <=2pt, shorten >=2pt] (design.east) -- (evaluation.west);
+\end{tikzpicture}
+}
+\caption{Public pseudo-3D benchmark design and evaluation protocol. Panel A summarizes the public seismic and benchmark products used to derive structural constraints. Panel B defines the two benchmark tracks used in the study. Panel C shows how constrained classical baselines, plain machine learning, and structured support reconstruction are evaluated through pseudo-3D support outputs and field metrics.}
+\label{fig:benchmarkdesign}
+\end{figure}
+
+\subsection{Harder synthetic benchmark}
+
+The synthetic benchmark used here serves as a stress test for model stability. Compared with the earlier toy benchmark, the current synthetic benchmark introduces stronger mismatch behavior, negative controls, and out-of-zone changes. In particular, we evaluate clean examples, harder out-of-distribution examples, and negative-control scenarios including no-change, mismatch-only, and out-of-zone cases. These synthetic experiments make it possible to evaluate model stability and false alarms across multiple random seeds in a way that cannot be achieved on the fixed field data alone.
+
+\section{Methods}
+
+\subsection{Method overview}
+
+The study design is summarized in Fig.~\ref{fig:benchmarkdesign}. Public seismic and benchmark products are first converted into a pseudo-3D benchmark, after which constrained classical baselines and machine learning models are evaluated under the same structural constraints. The field-facing output is a support-mapping product defined on a shared pseudo-3D benchmark.
+
+\subsection{Per-section methods}
+
+We compare three method families at the per-section stage. The first consists of deterministic classical baselines such as difference maps, cross-equalized differences, local warping, and a matched warp-shift comparator. These methods provide a practical baseline under the same benchmark constraints used for machine learning outputs. The second family is plain machine learning, which predicts change support from baseline and monitor sections without additional hybrid inputs. The third family is a hybrid model that was originally expected to improve robustness.
+
+The current evidence places the hybrid model in a comparator role rather than in the central field result.
+
+\subsection{Structured support reconstruction}
+
+The strongest field method evaluated here is the structured plain variant. It begins with per-section probabilities from the plain machine learning model, applies the public storage-interval mask, and then performs deterministic support reconstruction to promote laterally coherent and geologically plausible support bodies. The reconstruction stage removes isolated artifacts, preserves thin but coherent support streaks, and performs connected-component cleanup in pseudo-3D space across inline, sample, and trace dimensions.
+
+This stage is intentionally simple. It transforms per-section probabilities into a support volume that is better aligned with the public benchmark constraints and more useful for multi-inline monitoring assessment.
+
+We also tested a layer-aware extension that split the storage interval into benchmark-informed bands and enforced stronger vertical rules. That extension did not improve the real benchmark and is therefore treated as a secondary result.
+
+\subsection{Evaluation metrics}
+
+Synthetic experiments are reported using Dice, intersection-over-union, false-positive rate, and expected calibration error. Because the synthetic benchmark includes repeated training, the machine learning models are summarized with three-seed mean and standard deviation. Deterministic classical baselines are reported once because they do not depend on training seeds.
+
+Field experiments are evaluated with metrics that are more appropriate for pseudo-3D monitoring. These include trace-support intersection-over-union with the public 2010 support proxy, support-volume intersection-over-union, crossline continuity, predicted support fraction, and predicted fraction outside the support volume. The direct 2010 benchmark is treated as the main truth test because it compares seismic data and support proxy within the same processing family. The p07 temporal benchmark is used as a secondary test of support evolution and crossline stability.
+
+\section{Experimental design}
+
+The experiments are organized around three questions. The first asks whether the per-section models are stable on the harder synthetic benchmark. The second asks whether structured support reconstruction improves pseudo-3D field mapping on the direct eleven-inline benchmark. The third asks whether the same field method yields physically sensible temporal behavior on the eleven-inline p07 benchmark.
+
+For synthetic evaluation, we retrain the plain and hybrid models with seeds 11, 12, and 13. For field evaluation, all methods operate on the same exported pseudo-3D benchmarks and the same public support constraints. This keeps the comparison focused on the mapping method rather than on manual changes to the data pipeline.
+
+\section{Results}
+
+\subsection{Three-seed synthetic evaluation}
+
+The three-seed sweep shows that plain machine learning is currently the more stable and stronger learner on the harder synthetic benchmark. On the test split, plain machine learning reaches a mean Dice of $0.544 \pm 0.008$, compared with $0.494 \pm 0.064$ for the hybrid model. On the out-of-distribution split, plain machine learning reaches $0.206 \pm 0.032$, compared with $0.166 \pm 0.024$ for the hybrid model. The strongest deterministic classical baseline on the out-of-distribution split remains the simple difference map at 0.108 Dice. These results are summarized in Table~\ref{tab:synthetic}.
+
+\begin{table}[t]
+\centering
+\small
+\caption{Synthetic benchmark results. Classical results are deterministic. Machine learning results are reported as mean $\pm$ standard deviation across three seeds.}
+\label{tab:synthetic}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{llcccc}
+\toprule
+Split & Method & Dice & IoU & False-positive rate & ECE \\
+\midrule
+Test & Difference & 0.099 & 0.052 & 0.140 & 0.143 \\
+Test & Plain ML & 0.544 $\pm$ 0.008 & 0.374 $\pm$ 0.008 & 0.011 $\pm$ 0.003 & 0.048 $\pm$ 0.016 \\
+Test & Hybrid ML & 0.494 $\pm$ 0.064 & 0.331 $\pm$ 0.059 & 0.012 $\pm$ 0.003 & 0.043 $\pm$ 0.013 \\
+\midrule
+OOD & Difference & 0.108 & 0.057 & 0.065 & 0.073 \\
+OOD & Plain ML & 0.206 $\pm$ 0.032 & 0.115 $\pm$ 0.020 & 0.004 $\pm$ 0.001 & 0.034 $\pm$ 0.019 \\
+OOD & Hybrid ML & 0.166 $\pm$ 0.024 & 0.091 $\pm$ 0.014 & 0.006 $\pm$ 0.002 & 0.030 $\pm$ 0.013 \\
+\bottomrule
+\end{tabular}
+}
+\end{table}
+
+The synthetic sweep clarifies the model comparison and identifies plain machine learning as the base learner that should be carried into the field evaluation.
+
+\subsection{Direct eleven-inline benchmark}
+
+The direct p10 benchmark is the clearest field result in the paper. Table~\ref{tab:direct} shows that the structured support reconstruction improves support-volume intersection-over-union from 0.562 for constrained plain machine learning to 0.685 while keeping trace-support overlap nearly unchanged at 0.907 versus 0.910. The constrained classical baseline is far less selective. Its trace-support intersection-over-union is only 0.322 and 62.3\% of its predicted support lies outside the public support volume.
+
+\begin{table}[t]
+\centering
+\small
+\caption{Direct eleven-inline p10 benchmark. The structured support method yields the strongest support-volume result while preserving lateral support alignment.}
+\label{tab:direct}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lcccc}
+\toprule
+Method & Trace-support IoU & Support-volume IoU & Crossline continuity & Fraction outside support \\
+\midrule
+Best classical constrained & 0.322 & 0.363 & 0.987 & 0.623 \\
+Plain ML constrained & 0.910 & 0.562 & 0.973 & 0.018 \\
+Plain ML structured constrained & 0.907 & 0.685 & 0.977 & 0.025 \\
+Plain ML layered structured constrained & 0.758 & 0.475 & 0.789 & 0.070 \\
+\bottomrule
+\end{tabular}
+}
+\end{table}
+
+Figure~\ref{fig:directpanel} illustrates this result on inline 1840. The structured method is more compact and better aligned with the benchmark support than the classical baseline, while the layer-aware extension visibly under-recovers the support body.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{figures/paper_direct_2010_panel.png}
+\caption{Direct p10 benchmark on inline 1840. From left to right the panels show the best constrained classical baseline, constrained plain machine learning, constrained plain machine learning with structured support reconstruction, the tested layer-aware extension, and the benchmark support. The structured support procedure provides the strongest support-volume agreement on the direct benchmark.}
+\label{fig:directpanel}
+\end{figure}
+
+\subsection{Temporal eleven-inline benchmark}
+
+The p07 temporal benchmark is more nuanced and is therefore important for an honest interpretation. Across the full eleven-inline volume, the constrained classical baseline achieves a higher raw support-volume intersection-over-union than plain machine learning because it predicts support almost everywhere inside the permitted region. Its predicted trace fraction is 0.995 and 48.8\% of the predicted support still lies outside the public support proxy. In contrast, structured plain machine learning reaches support-volume intersection-over-union of 0.438 with trace-support overlap of 0.879 and crossline continuity of 0.982, while keeping the predicted fraction outside support to 0.002. Table~\ref{tab:temporal} summarizes these overall results.
+
+\begin{table}[t]
+\centering
+\small
+\caption{Overall results on the eleven-inline p07 temporal benchmark. The classical baseline attains a large support-volume score by spreading support too broadly, whereas the structured plain method remains selective and coherent.}
+\label{tab:temporal}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lcccc}
+\toprule
+Method & Trace-support IoU & Support-volume IoU & Crossline continuity & Fraction outside support \\
+\midrule
+Best classical constrained & 0.385 & 0.477 & 0.998 & 0.488 \\
+Plain ML constrained & 0.873 & 0.300 & 0.967 & 0.001 \\
+Plain ML structured constrained & 0.879 & 0.438 & 0.982 & 0.002 \\
+Plain ML layered structured constrained & 0.721 & 0.433 & 0.788 & 0.004 \\
+\bottomrule
+\end{tabular}
+}
+\end{table}
+
+The temporal slices in Fig.~\ref{fig:p07panel} show that the structured method preserves a compact support body across the 2001, 2004, and 2006 monitors while following the public 2010 support envelope. The result remains benchmark-constrained and is interpreted here as a support-mapping product.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{figures/p07_temporal_panel.png}
+\caption{Structured plain support maps on inline 1840 for the p07 temporal benchmark. White contours show the public 2010 support proxy. The maps remain compact across vintages while staying inside the benchmark-constrained support region.}
+\label{fig:p07panel}
+\end{figure}
+
+\subsection{Negative results and false alarms}
+
+Two negative results are important to retain. First, the hybrid model does not outperform plain machine learning on the harder synthetic benchmark and remains weaker on the direct field benchmark. Second, the layer-aware extension does not improve the field result and reduces both trace-support overlap and crossline continuity. These outcomes help define the scope of the contribution supported by the present benchmark.
+
+The negative-control synthetic scenarios also reinforce this point. On mismatch-only and out-of-zone examples, plain machine learning keeps the false-positive rate low while retaining higher Dice than the hybrid model for out-of-zone changes. These scenarios do not replace field validation, but they show that the benchmark can reject weak hypotheses as well as confirm positive results.
+
+\section{Discussion}
+
+The main result is that benchmark-constrained structured support reconstruction adds value when the underlying section-level learner is stable. On the direct eleven-inline benchmark, it improves support-volume overlap relative to constrained plain machine learning while preserving the lateral support footprint. On the temporal benchmark, it improves support-volume agreement and crossline continuity simultaneously. This matters for CCS monitoring because a method that improves section-level overlap while producing spatially inconsistent support bodies is unlikely to be useful in practice.
+
+The comparison with the other tested methods defines the scope of that contribution. The hybrid model does not outperform plain machine learning on the harder synthetic benchmark and remains weaker on the direct field benchmark. The layer-aware extension also fails to improve the field results. These outcomes strengthen the study scientifically because they show that the benchmark can reject unsupported method hypotheses as well as identify effective ones. The present evidence supports a benchmark-and-method contribution centered on structured support mapping.
+
+Several limitations remain. The field results are benchmark-constrained and should be interpreted as support mapping. The pseudo-3D benchmark is assembled from multiple inlines rather than from the full 3D field cube. The support-volume proxy is benchmark-derived and evaluates support occupancy rather than direct saturation. The synthetic benchmark is more demanding than the earlier version, but it still does not represent full site-scale coupled flow and wave physics. Even with these limitations, the study provides an open-data testbed for comparing field-facing CO$_2$ monitoring methods under shared constraints and shared metrics.
+
+These findings also have a practical implication for CCS monitoring. Open field evaluation benefits from metrics that reward spatial selectivity and crossline coherence in addition to section-wise agreement. In that setting, structured support reconstruction converts stable section-level probabilities into pseudo-3D support volumes that are easier to assess against public benchmark products and more interpretable as monitoring outputs.
+
+\section{Conclusions}
+
+This paper introduced a public pseudo-3D benchmark for time-lapse CO$_2$ monitoring at Sleipner using eleven neighboring inlines, public benchmark constraints, and separate temporal and direct evaluation settings. The benchmark was used to compare constrained classical baselines, plain machine learning, hybrid machine learning, and deterministic support reconstruction stages.
+
+The main findings are straightforward. Plain machine learning is more stable than the hybrid model on the harder three-seed synthetic benchmark. Structured support reconstruction improves the plain machine learning field result on both the direct and temporal pseudo-3D benchmarks. The layer-aware extension does not improve the benchmark. The strongest conclusion supported by the present results is that benchmark-constrained structured support mapping provides the best field-facing result obtained in the current open Sleipner benchmark.
+
+The most valuable next step is broader evaluation against additional practical baselines and, if possible, an extension from pseudo-3D support mapping toward more directly quantitative field products.
+
+\section*{Data and code availability}
+
+The field data used in this study are publicly available through the Sleipner 4D Seismic Dataset and the Sleipner 2019 Benchmark Model on CO2DataShare \citep{equinor2020seismic,equinor2020benchmark}. The code used to construct the benchmark, run the reported experiments, and generate the manuscript figures and tables is available from the repository associated with this study.
+
+\ifuseelsarticle
+\bibliographystyle{elsarticle-num}
+\else
+\bibliographystyle{plainnat}
+\fi
+\bibliography{references}
+
+\end{document}

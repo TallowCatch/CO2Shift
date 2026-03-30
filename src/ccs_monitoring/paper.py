@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -25,13 +26,14 @@ def build_paper_evidence(config: dict[str, Any]) -> dict[str, Any]:
 
     paper_cfg = config["paper_evidence"]
     synthetic_metrics = _load_json(paper_cfg["synthetic_metrics_path"])
+    seed_sweep_summary = _load_optional_json(paper_cfg.get("seed_sweep_summary_path", ""))
     field_summary_payload = _load_json(paper_cfg["field_summary_path"])
     direct_summary_payload = _load_json(paper_cfg["direct_summary_path"])
     direct_config = load_config(paper_cfg["direct_config_path"])
     field_volume_summary = _extract_volume_summary(field_summary_payload)
     direct_volume_summary = _extract_volume_summary(direct_summary_payload)
 
-    synthetic_rows = _build_synthetic_rows(synthetic_metrics)
+    synthetic_rows = _build_synthetic_rows(synthetic_metrics, seed_sweep_summary)
     negative_control_rows = _build_negative_control_rows(synthetic_metrics)
     field_rows = _build_field_rows(field_volume_summary)
     direct_rows = _build_direct_rows(direct_volume_summary)
@@ -43,6 +45,9 @@ def build_paper_evidence(config: dict[str, Any]) -> dict[str, Any]:
         "claim": paper_cfg["claim"],
         "provenance": {
             "synthetic_metrics_path": str(Path(paper_cfg["synthetic_metrics_path"])),
+            "seed_sweep_summary_path": str(Path(paper_cfg["seed_sweep_summary_path"]))
+            if paper_cfg.get("seed_sweep_summary_path")
+            else "",
             "field_summary_path": str(Path(paper_cfg["field_summary_path"])),
             "direct_summary_path": str(Path(paper_cfg["direct_summary_path"])),
             "field_config_path": str(Path(paper_cfg["field_config_path"])),
@@ -53,9 +58,11 @@ def build_paper_evidence(config: dict[str, Any]) -> dict[str, Any]:
         "direct_rows": direct_rows,
         "ablation_rows": ablation_rows,
         "negative_control_rows": negative_control_rows,
+        "synthetic_seed_summary": _build_seed_summary_rows(seed_sweep_summary),
         "methods_results_block": _build_methods_results_block(
             paper_cfg["claim"],
             synthetic_metrics,
+            seed_sweep_summary,
             field_volume_summary,
             direct_volume_summary,
         ),
@@ -68,6 +75,7 @@ def build_paper_evidence(config: dict[str, Any]) -> dict[str, Any]:
     _write_csv(results_dir / "paper_direct_table.csv", direct_rows)
     _write_csv(results_dir / "paper_ablation_table.csv", ablation_rows)
     _write_csv(results_dir / "paper_negative_controls.csv", negative_control_rows)
+    _write_csv(results_dir / "paper_seed_sweep_table.csv", evidence_summary["synthetic_seed_summary"])
     (results_dir / "methods_results_block.txt").write_text(
         evidence_summary["methods_results_block"],
         encoding="utf-8",
@@ -75,21 +83,74 @@ def build_paper_evidence(config: dict[str, Any]) -> dict[str, Any]:
     return evidence_summary
 
 
-def _build_synthetic_rows(metrics: dict[str, Any]) -> list[dict[str, Any]]:
+def _build_synthetic_rows(metrics: dict[str, Any], seed_sweep_summary: dict[str, Any] | None) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
+    aggregate_lookup = _seed_aggregate_lookup(seed_sweep_summary)
     classical_method = _synthetic_classical_method(metrics)
     for split_name in ("test", "ood"):
         for method in (classical_method, "plain_ml", "hybrid_ml"):
+            aggregate = aggregate_lookup.get((split_name, method))
+            if aggregate is not None:
+                rows.append(
+                    {
+                        "split": split_name,
+                        "method": method,
+                        "source": "seed_sweep",
+                        "num_seeds": int(aggregate.get("num_seeds", 0)),
+                        "dice": float(aggregate["dice_mean"]),
+                        "dice_std": float(aggregate["dice_std"]),
+                        "iou": float(aggregate["iou_mean"]),
+                        "iou_std": float(aggregate["iou_std"]),
+                        "false_positive_rate": float(aggregate["false_positive_rate_mean"]),
+                        "false_positive_rate_std": float(aggregate["false_positive_rate_std"]),
+                        "ece": float(aggregate["ece_mean"]),
+                        "ece_std": float(aggregate["ece_std"]),
+                    }
+                )
+                continue
             rows.append(
                 {
                     "split": split_name,
                     "method": method,
+                    "source": "single_run",
+                    "num_seeds": 1,
                     "dice": float(metrics[split_name][method]["dice"]),
+                    "dice_std": 0.0,
                     "iou": float(metrics[split_name][method]["iou"]),
+                    "iou_std": 0.0,
                     "false_positive_rate": float(metrics[split_name][method]["false_positive_rate"]),
+                    "false_positive_rate_std": 0.0,
                     "ece": float(metrics[split_name][method]["ece"]),
+                    "ece_std": 0.0,
                 }
             )
+    return rows
+
+
+def _build_seed_summary_rows(seed_sweep_summary: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not seed_sweep_summary:
+        return []
+    rows: list[dict[str, Any]] = []
+    for row in seed_sweep_summary.get("aggregate_rows", []):
+        rows.append(
+            {
+                "split": str(row["split"]),
+                "method": str(row["method"]),
+                "num_seeds": int(row["num_seeds"]),
+                "dice_mean": float(row["dice_mean"]),
+                "dice_std": float(row["dice_std"]),
+                "iou_mean": float(row["iou_mean"]),
+                "iou_std": float(row["iou_std"]),
+                "false_positive_rate_mean": float(row["false_positive_rate_mean"]),
+                "false_positive_rate_std": float(row["false_positive_rate_std"]),
+                "ece_mean": float(row["ece_mean"]),
+                "ece_std": float(row["ece_std"]),
+                "brier_mean": float(row["brier_mean"]),
+                "brier_std": float(row["brier_std"]),
+                "nll_mean": float(row["nll_mean"]),
+                "nll_std": float(row["nll_std"]),
+            }
+        )
     return rows
 
 
@@ -283,10 +344,16 @@ def _build_direct_panel(config: dict[str, Any], volume_summary: dict[str, Any], 
 def _build_methods_results_block(
     claim: str,
     synthetic_metrics: dict[str, Any],
+    seed_sweep_summary: dict[str, Any] | None,
     field_volume_summary: dict[str, Any],
     direct_volume_summary: dict[str, Any],
 ) -> str:
     classical_method = _synthetic_classical_method(synthetic_metrics)
+    aggregate_lookup = _seed_aggregate_lookup(seed_sweep_summary)
+    ood_plain = aggregate_lookup.get(("ood", "plain_ml"))
+    ood_hybrid = aggregate_lookup.get(("ood", "hybrid_ml"))
+    test_plain = aggregate_lookup.get(("test", "plain_ml"))
+    test_hybrid = aggregate_lookup.get(("test", "hybrid_ml"))
     p07_plain = field_volume_summary["overall"]["plain_ml_constrained"]
     p07_structured = field_volume_summary["overall"]["plain_ml_structured_constrained"]
     p07_layered = field_volume_summary["overall"]["plain_ml_layered_structured_constrained"]
@@ -295,6 +362,24 @@ def _build_methods_results_block(
     p10_layered = direct_volume_summary["overall"]["plain_ml_layered_structured_constrained"]
     p10_classical = direct_volume_summary["overall"]["best_classical_constrained"]
     p10_hybrid = direct_volume_summary["overall"]["hybrid_ml_constrained"]
+    if ood_plain and ood_hybrid and test_plain and test_hybrid:
+        synthetic_text = (
+            f"Across a three-seed sweep on the harder benchmark-v2 synthetic task, plain ML reaches mean Dice "
+            f"{ood_plain['dice_mean']:.3f} ± {ood_plain['dice_std']:.3f} on the OOD split and "
+            f"{test_plain['dice_mean']:.3f} ± {test_plain['dice_std']:.3f} on the test split. "
+            f"The hybrid model reaches {ood_hybrid['dice_mean']:.3f} ± {ood_hybrid['dice_std']:.3f} on OOD and "
+            f"{test_hybrid['dice_mean']:.3f} ± {test_hybrid['dice_std']:.3f} on test, while the strongest "
+            f"deterministic classical baseline ({classical_method}) reaches "
+            f"{synthetic_metrics['ood'][classical_method]['dice']:.3f} Dice on the same OOD benchmark. "
+            "This means the seed sweep does not support a hybrid-centered synthetic story."
+        )
+    else:
+        synthetic_text = (
+            f"On the harder benchmark-v2 synthetic OOD split, plain ML reaches Dice "
+            f"{synthetic_metrics['ood']['plain_ml']['dice']:.3f}, the hybrid model reaches "
+            f"{synthetic_metrics['ood']['hybrid_ml']['dice']:.3f}, and the strongest classical synthetic baseline "
+            f"({classical_method}) reaches {synthetic_metrics['ood'][classical_method]['dice']:.3f}."
+        )
     return (
         f"Claim: {claim}\n\n"
         "Methods: We keep the 2D PyTorch models and classical baselines, but the main field-facing result now "
@@ -303,10 +388,7 @@ def _build_methods_results_block(
         "reservoir bands as a deterministic pseudo-3D refinement stage. Field outputs are benchmark-constrained "
         "using the public Sleipner storage interval, and the 3D evidence is reported on 11-inline pseudo-3D p07 "
         "and p10 benchmarks.\n\n"
-        f"Results: On the harder benchmark-v2 synthetic OOD split, plain ML reaches Dice "
-        f"{synthetic_metrics['ood']['plain_ml']['dice']:.3f}, the hybrid model reaches "
-        f"{synthetic_metrics['ood']['hybrid_ml']['dice']:.3f}, and the strongest classical synthetic baseline "
-        f"({classical_method}) reaches {synthetic_metrics['ood'][classical_method]['dice']:.3f}. "
+        f"Results: {synthetic_text} "
         f"On the 11-inline p07 temporal benchmark, structured plain ML improves support-volume IoU from "
         f"{p07_plain['support_volume_iou_2010']:.3f} to {p07_structured['support_volume_iou_2010']:.3f}, and the "
         f"layered variant drops it to {p07_layered['support_volume_iou_2010']:.3f}. Trace-support IoU "
@@ -343,6 +425,32 @@ def _synthetic_classical_method(metrics: dict[str, Any]) -> str:
 def _load_json(path: str | Path) -> dict[str, Any]:
     with Path(path).open("r", encoding="utf-8") as handle:
         return json.load(handle)
+
+
+def _load_optional_json(path: str | Path) -> dict[str, Any] | None:
+    if not path:
+        return None
+    candidate = Path(path)
+    if not candidate.exists():
+        return None
+    return _load_json(candidate)
+
+
+def _seed_aggregate_lookup(seed_sweep_summary: dict[str, Any] | None) -> dict[tuple[str, str], dict[str, Any]]:
+    if not seed_sweep_summary:
+        return {}
+    lookup: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in seed_sweep_summary.get("aggregate_rows", []):
+        split_name = str(row["split"])
+        method_name = str(row["method"])
+        normalized_row: dict[str, Any] = {}
+        for key, value in row.items():
+            if isinstance(value, float) and math.isnan(value):
+                normalized_row[key] = float("nan")
+            else:
+                normalized_row[key] = value
+        lookup[(split_name, method_name)] = normalized_row
+    return lookup
 
 
 def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
