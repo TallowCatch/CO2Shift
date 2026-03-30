@@ -17,6 +17,8 @@ class FieldPair:
     baseline: np.ndarray
     monitor: np.ndarray
     reservoir_mask: np.ndarray | None = None
+    support_mask: np.ndarray | None = None
+    metadata: dict[str, Any] | None = None
 
 
 def _ensure_2d_array(name: str, array: np.ndarray) -> np.ndarray:
@@ -104,6 +106,103 @@ def _make_plume_mask(
     return plume.astype(np.float32)
 
 
+def _trace_reservoir_bounds(reservoir_mask: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    nt, nx = reservoir_mask.shape
+    top = np.full(nx, -1, dtype=np.int32)
+    base = np.full(nx, -1, dtype=np.int32)
+    for trace_index in range(nx):
+        support = np.flatnonzero(reservoir_mask[:, trace_index] > 0.5)
+        if support.size == 0:
+            continue
+        top[trace_index] = int(support[0])
+        base[trace_index] = int(support[-1])
+    missing = top < 0
+    if np.any(missing):
+        default_top = nt // 3
+        default_base = min(default_top + nt // 8, nt - 1)
+        top[missing] = default_top
+        base[missing] = default_base
+    return top, base
+
+
+def _choose_scenario(config: dict[str, Any], rng: np.random.Generator) -> str:
+    probabilities = config.get("scenario_probabilities", {})
+    if not probabilities:
+        return "plume_growth"
+    names = list(probabilities.keys())
+    weights = np.asarray([max(float(probabilities[name]), 0.0) for name in names], dtype=np.float64)
+    if np.sum(weights) <= 0.0:
+        return "plume_growth"
+    weights = weights / np.sum(weights)
+    return str(rng.choice(names, p=weights))
+
+
+def _make_layered_plume_sequence(
+    reservoir_mask: np.ndarray,
+    config: dict[str, Any],
+    rng: np.random.Generator,
+    *,
+    in_zone: bool,
+) -> tuple[np.ndarray, np.ndarray]:
+    nt, nx = reservoir_mask.shape
+    num_vintages = int(config.get("num_monitor_vintages", 3))
+    layer_count_range = config.get("plume_layer_count_range", [2, 4])
+    thickness_range = config.get("plume_layer_thickness_range", [2, 5])
+    growth_curve = np.asarray(config.get("plume_growth_curve", [0.45, 0.75, 1.0]), dtype=np.float32)
+    if growth_curve.size != num_vintages:
+        growth_curve = np.linspace(0.45, 1.0, num_vintages, dtype=np.float32)
+
+    top, base = _trace_reservoir_bounds(reservoir_mask)
+    reservoir_positions = np.argwhere(reservoir_mask > 0.5)
+    center_trace = int(rng.integers(0, nx))
+    if reservoir_positions.size > 0 and in_zone:
+        center_trace = int(reservoir_positions[rng.integers(0, len(reservoir_positions)), 1])
+    base_half_width = int(rng.integers(max(6, nx // 20), max(10, nx // 9)))
+    max_half_width = int(rng.integers(max(base_half_width + 4, nx // 8), max(base_half_width + 8, nx // 5)))
+
+    layer_count = int(rng.integers(layer_count_range[0], layer_count_range[1] + 1))
+    layer_fractions = np.sort(rng.uniform(0.14, 0.86, size=layer_count).astype(np.float32))
+    masks = np.zeros((num_vintages, nt, nx), dtype=np.float32)
+    layer_support = np.zeros((layer_count, nt, nx), dtype=np.float32)
+
+    for layer_index, fraction in enumerate(layer_fractions):
+        thickness = int(rng.integers(thickness_range[0], thickness_range[1] + 1))
+        for trace_index in range(nx):
+            thickness_trace = max(int(base[trace_index] - top[trace_index]), 3)
+            if in_zone:
+                center_time = top[trace_index] + int(fraction * thickness_trace)
+            else:
+                offset = int(rng.integers(max(6, nt // 18), max(10, nt // 10)))
+                direction = -1 if rng.random() < 0.65 else 1
+                if direction < 0:
+                    center_time = max(top[trace_index] - offset, 1)
+                else:
+                    center_time = min(base[trace_index] + offset, nt - 2)
+            start = max(center_time - thickness // 2, 0)
+            stop = min(start + thickness, nt)
+            layer_support[layer_index, start:stop, trace_index] = 1.0
+
+    for vintage_index, scale in enumerate(growth_curve):
+        half_width = int(round(base_half_width + scale * (max_half_width - base_half_width)))
+        x_start = max(center_trace - half_width, 0)
+        x_stop = min(center_trace + half_width + 1, nx)
+        vintage_mask = np.zeros((nt, nx), dtype=bool)
+        for trace_index in range(x_start, x_stop):
+            lateral_scale = 1.0 - abs(trace_index - center_trace) / max(half_width, 1)
+            active_layers = max(1, int(np.ceil(layer_count * max(scale, 0.25) * max(lateral_scale, 0.2))))
+            trace_layers = layer_support[:active_layers, :, trace_index] > 0.5
+            if trace_layers.size == 0:
+                continue
+            vintage_mask[:, trace_index] = np.any(trace_layers, axis=0)
+        if in_zone:
+            vintage_mask &= reservoir_mask > 0.2
+        vintage_mask = ndimage.binary_dilation(vintage_mask, iterations=1)
+        masks[vintage_index] = vintage_mask.astype(np.float32)
+
+    final_layer_support = (np.sum(layer_support, axis=0) > 0.0).astype(np.float32)
+    return masks.astype(np.float32), final_layer_support.astype(np.float32)
+
+
 def _impedance_to_seismic(impedance: np.ndarray, wavelet_freq: float) -> np.ndarray:
     reflectivity = np.diff(np.log(np.clip(impedance, 1e-3, None)), axis=0, prepend=np.log(impedance[:1, :]))
     wavelet = ricker_wavelet(length=17, frequency=wavelet_freq)
@@ -126,6 +225,12 @@ def _apply_mismatch(
         mismatched = np.roll(mismatched, shift=shift, axis=1)
     metadata["trace_shift"] = float(shift)
 
+    static_shift_min, static_shift_max = config.get("static_shift_range", [0, 0])
+    static_shift = int(rng.integers(static_shift_min, static_shift_max + 1))
+    if static_shift != 0:
+        mismatched = np.roll(mismatched, shift=static_shift, axis=0)
+    metadata["static_shift"] = float(static_shift)
+
     amplitude_min, amplitude_max = config["amplitude_scale_range"]
     amplitude_scale = float(rng.uniform(amplitude_min, amplitude_max))
     mismatched *= amplitude_scale
@@ -144,7 +249,128 @@ def _apply_mismatch(
     mismatched += rng.normal(0.0, noise_std, size=mismatched.shape).astype(np.float32)
     metadata["noise_std"] = noise_std
 
+    coherent_min, coherent_max = config.get("coherent_noise_scale_range", [0.0, 0.0])
+    coherent_scale = float(rng.uniform(coherent_min, coherent_max))
+    if coherent_scale > 0.0:
+        time_axis = np.linspace(0.0, 1.0, mismatched.shape[0], dtype=np.float32)[:, None]
+        trace_axis = np.linspace(0.0, 1.0, mismatched.shape[1], dtype=np.float32)[None, :]
+        coherent = np.sin(2.0 * np.pi * (1.5 * time_axis + rng.uniform(0.5, 2.5) * trace_axis + rng.uniform(0.0, 1.0)))
+        coherent += 0.5 * np.cos(2.0 * np.pi * (3.0 * time_axis + rng.uniform(0.0, 1.0)))
+        mismatched += coherent_scale * coherent.astype(np.float32)
+    metadata["coherent_noise_scale"] = coherent_scale
+
+    overburden_min, overburden_max = config.get("overburden_artifact_scale_range", [0.0, 0.0])
+    overburden_scale = float(rng.uniform(overburden_min, overburden_max))
+    if overburden_scale > 0.0:
+        overburden_window = np.linspace(1.0, 0.0, mismatched.shape[0], dtype=np.float32)[:, None]
+        overburden_window = np.clip(overburden_window * 2.0, 0.0, 1.0)
+        artifact = rng.normal(0.0, 1.0, size=mismatched.shape).astype(np.float32)
+        artifact = ndimage.gaussian_filter(artifact, sigma=(4.0, 1.5))
+        mismatched += overburden_scale * overburden_window * artifact
+    metadata["overburden_artifact_scale"] = overburden_scale
+
     return mismatched.astype(np.float32), metadata
+
+
+def _mismatch_type_from_metadata(metadata: dict[str, float]) -> str:
+    components: list[str] = []
+    if abs(float(metadata.get("trace_shift", 0.0))) > 0.0:
+        components.append("trace_shift")
+    if abs(float(metadata.get("static_shift", 0.0))) > 0.0:
+        components.append("static_shift")
+    if abs(float(metadata.get("amplitude_scale", 1.0)) - 1.0) > 1e-6:
+        components.append("amplitude_scale")
+    if float(metadata.get("drop_trace_fraction", 0.0)) > 0.0:
+        components.append("missing_traces")
+    if float(metadata.get("noise_std", 0.0)) > 0.0:
+        components.append("random_noise")
+    if float(metadata.get("coherent_noise_scale", 0.0)) > 0.0:
+        components.append("coherent_noise")
+    if float(metadata.get("overburden_artifact_scale", 0.0)) > 0.0:
+        components.append("overburden_artifact")
+    return "+".join(components) if components else "clean"
+
+
+def generate_synthetic_sample_v2(
+    shape: tuple[int, int],
+    family_id: int,
+    config: dict[str, Any],
+    rng: np.random.Generator,
+) -> dict[str, Any]:
+    baseline_impedance, reservoir_mask = _build_layered_impedance(shape, family_id, rng)
+    scenario_type = _choose_scenario(config, rng)
+    in_zone = scenario_type != "out_of_zone"
+    mask_sequence, layer_support = _make_layered_plume_sequence(
+        reservoir_mask,
+        config,
+        rng,
+        in_zone=in_zone,
+    )
+    num_vintages = mask_sequence.shape[0]
+    plume_strength = float(rng.uniform(*config.get("plume_strength_range", [0.08, 0.24])))
+
+    if scenario_type in {"mismatch_only", "no_change"}:
+        mask_sequence[:] = 0.0
+
+    base_freq = float(rng.uniform(*config["wavelet_freq_range"]))
+    baseline = _impedance_to_seismic(baseline_impedance, base_freq)
+    monitor_sequence: list[np.ndarray] = []
+    mismatch_metadatas: list[dict[str, float]] = []
+
+    for vintage_index in range(num_vintages):
+        vintage_impedance = baseline_impedance.copy()
+        if scenario_type in {"plume_growth", "out_of_zone"}:
+            vintage_impedance *= 1.0 - plume_strength * mask_sequence[vintage_index]
+            vintage_impedance = ndimage.gaussian_filter(vintage_impedance, sigma=(0.8, 0.6))
+
+        freq_min, freq_max = config["wavelet_freq_range"]
+        monitor_freq = base_freq if rng.random() <= config["clean_probability"] else float(rng.uniform(freq_min, freq_max))
+        monitor = _impedance_to_seismic(vintage_impedance, monitor_freq)
+
+        mismatch_metadata = {
+            "trace_shift": 0.0,
+            "static_shift": 0.0,
+            "amplitude_scale": 1.0,
+            "drop_trace_fraction": 0.0,
+            "noise_std": 0.0,
+            "coherent_noise_scale": 0.0,
+            "overburden_artifact_scale": 0.0,
+        }
+        apply_mismatch = scenario_type != "no_change" and (
+            scenario_type == "mismatch_only" or rng.random() < config["mismatch_probability"]
+        )
+        if apply_mismatch:
+            monitor, mismatch_metadata = _apply_mismatch(monitor, config, rng)
+        monitor_sequence.append(monitor.astype(np.float32))
+        mismatch_metadatas.append(mismatch_metadata)
+
+    containment_label = int(scenario_type == "plume_growth")
+    metadata = {
+        "family_id": family_id,
+        "benchmark_version": "v2",
+        "scenario_type": scenario_type,
+        "containment_label": containment_label,
+        "base_freq": base_freq,
+        "plume_strength": plume_strength,
+        "num_monitor_vintages": num_vintages,
+        "mismatch_type": _mismatch_type_from_metadata(mismatch_metadatas[-1]),
+        "monitor_sequence_mismatch": mismatch_metadatas,
+    }
+
+    return {
+        "baseline": baseline.astype(np.float32),
+        "monitor": monitor_sequence[-1].astype(np.float32),
+        "monitor_sequence": np.stack(monitor_sequence, axis=0).astype(np.float32),
+        "change_mask": mask_sequence[-1].astype(np.float32),
+        "change_mask_sequence": mask_sequence.astype(np.float32),
+        "layer_support": layer_support.astype(np.float32),
+        "reservoir_mask": reservoir_mask.astype(np.float32),
+        "family_id": family_id,
+        "scenario_type": scenario_type,
+        "mismatch_type": metadata["mismatch_type"],
+        "containment_label": containment_label,
+        "metadata": metadata,
+    }
 
 
 def generate_synthetic_sample(
@@ -153,6 +379,9 @@ def generate_synthetic_sample(
     config: dict[str, Any],
     rng: np.random.Generator,
 ) -> dict[str, Any]:
+    if str(config.get("benchmark_version", "v1")).lower() == "v2":
+        return generate_synthetic_sample_v2(shape, family_id, config, rng)
+
     baseline_impedance, reservoir_mask = _build_layered_impedance(shape, family_id, rng)
     plume_mask = _make_plume_mask(
         reservoir_mask,
@@ -220,6 +449,12 @@ def _generate_split(
     reservoir_masks: list[np.ndarray] = []
     family_ids: list[int] = []
     metadata_json: list[str] = []
+    monitor_sequences: list[np.ndarray] = []
+    change_mask_sequences: list[np.ndarray] = []
+    layer_supports: list[np.ndarray] = []
+    scenario_types: list[str] = []
+    mismatch_types: list[str] = []
+    containment_labels: list[int] = []
 
     for _ in range(count):
         family_id = int(rng.choice(family_choices))
@@ -230,17 +465,36 @@ def _generate_split(
         reservoir_masks.append(sample["reservoir_mask"])
         family_ids.append(sample["family_id"])
         metadata_json.append(json.dumps(sample["metadata"], sort_keys=True))
+        if "monitor_sequence" in sample:
+            monitor_sequences.append(sample["monitor_sequence"])
+        if "change_mask_sequence" in sample:
+            change_mask_sequences.append(sample["change_mask_sequence"])
+        if "layer_support" in sample:
+            layer_supports.append(sample["layer_support"])
+        scenario_types.append(str(sample.get("scenario_type", "plume_growth")))
+        mismatch_types.append(str(sample.get("mismatch_type", "clean")))
+        containment_labels.append(int(sample.get("containment_label", 1)))
+
+    payload: dict[str, Any] = {
+        "baseline": np.stack(baselines),
+        "monitor": np.stack(monitors),
+        "change_mask": np.stack(change_masks),
+        "reservoir_mask": np.stack(reservoir_masks),
+        "family_id": np.array(family_ids, dtype=np.int16),
+        "metadata_json": np.array(metadata_json),
+        "scenario_type": np.array(scenario_types),
+        "mismatch_type": np.array(mismatch_types),
+        "containment_label": np.array(containment_labels, dtype=np.int8),
+    }
+    if monitor_sequences:
+        payload["monitor_sequence"] = np.stack(monitor_sequences)
+    if change_mask_sequences:
+        payload["change_mask_sequence"] = np.stack(change_mask_sequences)
+    if layer_supports:
+        payload["layer_support"] = np.stack(layer_supports)
 
     split_path = output_dir / f"{split_name}.npz"
-    np.savez_compressed(
-        split_path,
-        baseline=np.stack(baselines),
-        monitor=np.stack(monitors),
-        change_mask=np.stack(change_masks),
-        reservoir_mask=np.stack(reservoir_masks),
-        family_id=np.array(family_ids, dtype=np.int16),
-        metadata_json=np.array(metadata_json),
-    )
+    np.savez_compressed(split_path, **payload)
     return split_path
 
 
@@ -262,7 +516,9 @@ def generate_synthetic_benchmark(config: dict[str, Any], output_root: str | Path
 
     manifest = {
         "seed": seed,
+        "benchmark_version": str(synthetic.get("benchmark_version", "v1")),
         "section_shape": synthetic["section_shape"],
+        "num_monitor_vintages": int(synthetic.get("num_monitor_vintages", 1)),
         "splits": {name: str(path) for name, path in split_paths.items()},
     }
     manifest_path = dataset_dir / "manifest.json"
@@ -322,11 +578,23 @@ def validate_field_pair(pair: FieldPair) -> dict[str, Any]:
                 f"Field pair {pair.name} has a reservoir mask shape {reservoir_mask.shape} "
                 f"that does not match baseline shape {baseline.shape}."
             )
+    has_support_mask = pair.support_mask is not None
+    if has_support_mask:
+        support_mask = _ensure_2d_array(f"{pair.name}.support_mask", pair.support_mask)
+        if support_mask.shape != baseline.shape:
+            raise ValueError(
+                f"Field pair {pair.name} has a support mask shape {support_mask.shape} "
+                f"that does not match baseline shape {baseline.shape}."
+            )
 
     return {
         "name": pair.name,
         "shape": list(baseline.shape),
         "has_reservoir_mask": has_reservoir_mask,
+        "has_support_mask": has_support_mask,
+        "inline_id": None if pair.metadata is None else pair.metadata.get("inline_id"),
+        "vintage": None if pair.metadata is None else pair.metadata.get("vintage"),
+        "processing_family": None if pair.metadata is None else pair.metadata.get("processing_family"),
     }
 
 
@@ -360,11 +628,24 @@ def load_field_pairs(config: dict[str, Any], split_arrays: dict[str, np.ndarray]
         pairs: list[FieldPair] = []
         shared_baseline = manifest.get("baseline")
         shared_reservoir_mask = manifest.get("reservoir_mask")
+        shared_support_mask = manifest.get("support_mask", manifest.get("plume_support_volume"))
         for entry in manifest.get("pairs", []):
             baseline_path = entry.get("baseline", shared_baseline)
             reservoir_mask_path = entry.get("reservoir_mask", shared_reservoir_mask)
+            support_mask_path = entry.get("support_mask", entry.get("plume_support_volume", shared_support_mask))
             if not baseline_path:
                 raise ValueError("Each manifest entry must define a baseline path or provide a shared baseline.")
+            metadata = {
+                key: value
+                for key, value in {
+                    "inline_id": entry.get("inline_id"),
+                    "vintage": entry.get("vintage"),
+                    "processing_family": entry.get("processing_family"),
+                    "source_name": entry.get("source_name"),
+                    "support_note": entry.get("support_note", manifest.get("support_note")),
+                }.items()
+                if value is not None
+            }
             pair = FieldPair(
                 name=entry.get("name", Path(entry["monitor"]).stem),
                 baseline=_load_array(manifest_path.parent / baseline_path),
@@ -372,6 +653,10 @@ def load_field_pairs(config: dict[str, Any], split_arrays: dict[str, np.ndarray]
                 reservoir_mask=(
                     _load_array(manifest_path.parent / reservoir_mask_path) if reservoir_mask_path else None
                 ),
+                support_mask=(
+                    _load_array(manifest_path.parent / support_mask_path) if support_mask_path else None
+                ),
+                metadata=metadata or None,
             )
             pairs.append(pair)
         summarize_field_pairs(pairs)
@@ -386,6 +671,7 @@ def load_field_pairs(config: dict[str, Any], split_arrays: dict[str, np.ndarray]
             baseline = arrays["baseline"].astype(np.float32)
             monitor = arrays["monitor"].astype(np.float32)
             reservoir_mask = arrays["reservoir_mask"].astype(np.float32) if "reservoir_mask" in arrays else None
+            support_mask = arrays["support_mask"].astype(np.float32) if "support_mask" in arrays else None
             name = str(arrays["name"]) if "name" in arrays else path.stem
     elif path.suffix == ".npy":
         data = np.load(path)
@@ -394,10 +680,11 @@ def load_field_pairs(config: dict[str, Any], split_arrays: dict[str, np.ndarray]
         baseline = data[0].astype(np.float32)
         monitor = data[1].astype(np.float32)
         reservoir_mask = None
+        support_mask = None
         name = path.stem
     else:
         raise ValueError("Only .npz and .npy field inputs are supported in the bootstrap implementation.")
 
-    pairs = [FieldPair(name=name, baseline=baseline, monitor=monitor, reservoir_mask=reservoir_mask)]
+    pairs = [FieldPair(name=name, baseline=baseline, monitor=monitor, reservoir_mask=reservoir_mask, support_mask=support_mask)]
     summarize_field_pairs(pairs)
     return pairs

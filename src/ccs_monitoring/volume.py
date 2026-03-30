@@ -10,8 +10,7 @@ import dask.array as da
 import numpy as np
 import xarray as xr
 
-from .field_tools import collect_field_prediction_bundle
-from .pipeline import _cleanup_field_binary, _postprocess_field_prediction
+from .field_tools import collect_field_prediction_bundle, summarize_field_prediction_bundle
 from .runtime import ensure_runtime_environment
 
 
@@ -25,80 +24,181 @@ def build_volume(config: dict[str, Any]) -> dict[str, Any]:
     if not bundle.outputs:
         raise ValueError("build-volume requires field.enabled=true with at least one field pair.")
 
+    field_summary = summarize_field_prediction_bundle(config, bundle)
     outputs = _filter_outputs(bundle.outputs, volume_cfg.get("vintages", []))
     first_pair = outputs[0]["pair"]
     nt, nx = first_pair.baseline.shape
-    vintage_names = [entry["pair"].name for entry in outputs]
+    inline_values, vintage_values = _resolve_inline_vintage_axes(outputs, volume_cfg)
+    inline_count = len(inline_values)
+    vintage_count = len(vintage_values)
+    inline_index = {value: index for index, value in enumerate(inline_values)}
+    vintage_index = {value: index for index, value in enumerate(vintage_values)}
 
-    baseline = first_pair.baseline.astype(np.float32)
-    monitor = np.stack([entry["pair"].monitor.astype(np.float32) for entry in outputs], axis=0)
-    raw_probability = np.stack([entry["hybrid_probs"].astype(np.float32) for entry in outputs], axis=0)
-    uncertainty = np.stack([entry["hybrid_uncertainty"].astype(np.float32) for entry in outputs], axis=0)
-    cross_equalized = np.stack(
-        [
-            entry["cross_equalized_binary"].astype(np.float32)
-            if "cross_equalized_binary" in entry
-            else np.zeros((nt, nx), dtype=np.float32)
-            for entry in _ensure_cross_equalized(outputs, bundle.cross_equalized_threshold, config)
-        ],
-        axis=0,
-    )
-    constrained = np.stack(
-        [
-            _postprocess_field_prediction(
-                entry["hybrid_probs"],
-                entry["hybrid_uncertainty"],
-                entry["pair"].reservoir_mask,
-                config.get("field", {}),
-                shared_context=bundle.shared_context,
-            )[0].astype(np.float32)
-            for entry in outputs
-        ],
-        axis=0,
-    )
-    reservoir_mask = (
-        first_pair.reservoir_mask.astype(np.float32)
-        if first_pair.reservoir_mask is not None
-        else np.ones_like(first_pair.baseline, dtype=np.float32)
-    )
-    support_trace = (
-        bundle.plume_support_traces.astype(np.float32)
-        if bundle.plume_support_traces is not None
-        else np.zeros(nx, dtype=np.float32)
-    )
-    support_volume = reservoir_mask * support_trace[None, :]
+    baseline = np.zeros((inline_count, nt, nx), dtype=np.float32)
+    reservoir_mask = np.zeros((inline_count, nt, nx), dtype=np.float32)
+    support_trace = np.zeros((inline_count, nx), dtype=np.float32)
+    support_volume = np.zeros((inline_count, nt, nx), dtype=np.float32)
+    monitor = np.full((inline_count, vintage_count, nt, nx), np.nan, dtype=np.float32)
+    raw_probability = np.full((inline_count, vintage_count, nt, nx), np.nan, dtype=np.float32)
+    uncertainty = np.full((inline_count, vintage_count, nt, nx), np.nan, dtype=np.float32)
+    best_classical_constrained = np.full((inline_count, vintage_count, nt, nx), np.nan, dtype=np.float32)
+    plain_ml_constrained = np.full((inline_count, vintage_count, nt, nx), np.nan, dtype=np.float32)
+    plain_ml_pseudo3d_constrained = np.full((inline_count, vintage_count, nt, nx), np.nan, dtype=np.float32)
+    plain_ml_structured_constrained = np.full((inline_count, vintage_count, nt, nx), np.nan, dtype=np.float32)
+    hybrid_constrained = np.full((inline_count, vintage_count, nt, nx), np.nan, dtype=np.float32)
+    hybrid_structured_constrained = np.full((inline_count, vintage_count, nt, nx), np.nan, dtype=np.float32)
+    hybrid_pseudo3d_constrained = np.full((inline_count, vintage_count, nt, nx), np.nan, dtype=np.float32)
+    pair_available = np.zeros((inline_count, vintage_count), dtype=np.int8)
+    pair_names = np.full((inline_count, vintage_count), "", dtype="<U128")
+
+    for entry in outputs:
+        pair = entry["pair"]
+        inline_label = _inline_label(pair)
+        vintage_label = _vintage_label(pair)
+        inline_idx = inline_index[inline_label]
+        vintage_idx = vintage_index[vintage_label]
+
+        if pair.baseline.shape != (nt, nx) or pair.monitor.shape != (nt, nx):
+            raise ValueError(
+                "All field pairs used for volume rendering must share the same section shape. "
+                f"Expected {(nt, nx)} but received {pair.monitor.shape} for {pair.name}."
+            )
+
+        baseline[inline_idx] = pair.baseline.astype(np.float32)
+        pair_reservoir_mask = (
+            pair.reservoir_mask.astype(np.float32)
+            if pair.reservoir_mask is not None
+            else np.ones_like(pair.baseline, dtype=np.float32)
+        )
+        pair_support_trace = (
+            entry.get("pair_support_traces").astype(np.float32)
+            if entry.get("pair_support_traces") is not None
+            else np.zeros(pair.baseline.shape[1], dtype=np.float32)
+        )
+        pair_support_volume = (
+            entry.get("support_volume").astype(np.float32)
+            if entry.get("support_volume") is not None
+            else pair_reservoir_mask * pair_support_trace[None, :]
+        )
+        reservoir_mask[inline_idx] = pair_reservoir_mask
+        support_trace[inline_idx] = pair_support_trace
+        support_volume[inline_idx] = pair_support_volume
+
+        monitor[inline_idx, vintage_idx] = pair.monitor.astype(np.float32)
+        raw_probability[inline_idx, vintage_idx] = entry["hybrid_probs"].astype(np.float32)
+        uncertainty[inline_idx, vintage_idx] = entry["hybrid_uncertainty"].astype(np.float32)
+        best_classical_constrained[inline_idx, vintage_idx] = entry["best_classical_constrained_binary"].astype(np.float32)
+        plain_ml_constrained[inline_idx, vintage_idx] = entry["plain_ml_constrained_binary"].astype(np.float32)
+        plain_ml_pseudo3d_constrained[inline_idx, vintage_idx] = entry["plain_ml_pseudo3d_constrained_binary"].astype(
+            np.float32
+        )
+        plain_ml_structured_constrained[inline_idx, vintage_idx] = entry["plain_ml_structured_constrained_binary"].astype(
+            np.float32
+        )
+        hybrid_constrained[inline_idx, vintage_idx] = entry["hybrid_ml_constrained_binary"].astype(np.float32)
+        hybrid_structured_constrained[inline_idx, vintage_idx] = entry["hybrid_ml_structured_constrained_binary"].astype(
+            np.float32
+        )
+        hybrid_pseudo3d_constrained[inline_idx, vintage_idx] = entry["hybrid_ml_pseudo3d_constrained_binary"].astype(
+            np.float32
+        )
+        pair_available[inline_idx, vintage_idx] = 1
+        pair_names[inline_idx, vintage_idx] = pair.name
 
     chunks = volume_cfg.get("chunking", {})
+    inline_chunk = int(chunks.get("inline", 1))
     vintage_chunk = int(chunks.get("vintage", 1))
     sample_chunk = int(chunks.get("sample", min(nt, 256)))
     trace_chunk = int(chunks.get("trace", min(nx, 128)))
 
     dataset = xr.Dataset(
         data_vars={
-            "baseline": (("sample", "trace"), baseline.astype(np.float32)),
-            "monitor": (("vintage", "sample", "trace"), da.from_array(monitor, chunks=(vintage_chunk, sample_chunk, trace_chunk))),
+            "baseline": (
+                ("inline", "sample", "trace"),
+                da.from_array(baseline, chunks=(inline_chunk, sample_chunk, trace_chunk)),
+            ),
+            "monitor": (
+                ("inline", "vintage", "sample", "trace"),
+                da.from_array(monitor, chunks=(inline_chunk, vintage_chunk, sample_chunk, trace_chunk)),
+            ),
             "raw_probability": (
-                ("vintage", "sample", "trace"),
-                da.from_array(raw_probability, chunks=(vintage_chunk, sample_chunk, trace_chunk)),
+                ("inline", "vintage", "sample", "trace"),
+                da.from_array(raw_probability, chunks=(inline_chunk, vintage_chunk, sample_chunk, trace_chunk)),
             ),
             "uncertainty": (
-                ("vintage", "sample", "trace"),
-                da.from_array(uncertainty, chunks=(vintage_chunk, sample_chunk, trace_chunk)),
+                ("inline", "vintage", "sample", "trace"),
+                da.from_array(uncertainty, chunks=(inline_chunk, vintage_chunk, sample_chunk, trace_chunk)),
             ),
+            "best_classical_constrained": (
+                ("inline", "vintage", "sample", "trace"),
+                da.from_array(best_classical_constrained, chunks=(inline_chunk, vintage_chunk, sample_chunk, trace_chunk)),
+            ),
+            "plain_ml_constrained": (
+                ("inline", "vintage", "sample", "trace"),
+                da.from_array(plain_ml_constrained, chunks=(inline_chunk, vintage_chunk, sample_chunk, trace_chunk)),
+            ),
+            "plain_ml_pseudo3d_constrained": (
+                ("inline", "vintage", "sample", "trace"),
+                da.from_array(
+                    plain_ml_pseudo3d_constrained,
+                    chunks=(inline_chunk, vintage_chunk, sample_chunk, trace_chunk),
+                ),
+            ),
+            "plain_ml_structured_constrained": (
+                ("inline", "vintage", "sample", "trace"),
+                da.from_array(
+                    plain_ml_structured_constrained,
+                    chunks=(inline_chunk, vintage_chunk, sample_chunk, trace_chunk),
+                ),
+            ),
+            "hybrid_constrained": (
+                ("inline", "vintage", "sample", "trace"),
+                da.from_array(hybrid_constrained, chunks=(inline_chunk, vintage_chunk, sample_chunk, trace_chunk)),
+            ),
+            "hybrid_ml_structured_constrained": (
+                ("inline", "vintage", "sample", "trace"),
+                da.from_array(
+                    hybrid_structured_constrained,
+                    chunks=(inline_chunk, vintage_chunk, sample_chunk, trace_chunk),
+                ),
+            ),
+            "hybrid_pseudo3d_constrained": (
+                ("inline", "vintage", "sample", "trace"),
+                da.from_array(
+                    hybrid_pseudo3d_constrained,
+                    chunks=(inline_chunk, vintage_chunk, sample_chunk, trace_chunk),
+                ),
+            ),
+            # Backward-compatible aliases for earlier plots/configs.
             "cross_equalized_support": (
-                ("vintage", "sample", "trace"),
-                da.from_array(cross_equalized, chunks=(vintage_chunk, sample_chunk, trace_chunk)),
+                ("inline", "vintage", "sample", "trace"),
+                da.from_array(best_classical_constrained, chunks=(inline_chunk, vintage_chunk, sample_chunk, trace_chunk)),
             ),
             "constrained_support": (
-                ("vintage", "sample", "trace"),
-                da.from_array(constrained, chunks=(vintage_chunk, sample_chunk, trace_chunk)),
+                ("inline", "vintage", "sample", "trace"),
+                da.from_array(hybrid_constrained, chunks=(inline_chunk, vintage_chunk, sample_chunk, trace_chunk)),
             ),
-            "reservoir_mask": (("sample", "trace"), reservoir_mask.astype(np.float32)),
-            "support_trace_2010": (("trace",), support_trace.astype(np.float32)),
-            "support_volume_2010": (("sample", "trace"), support_volume.astype(np.float32)),
+            "reservoir_mask": (
+                ("inline", "sample", "trace"),
+                da.from_array(reservoir_mask, chunks=(inline_chunk, sample_chunk, trace_chunk)),
+            ),
+            "support_trace_2010": (
+                ("inline", "trace"),
+                da.from_array(support_trace, chunks=(inline_chunk, trace_chunk)),
+            ),
+            "support_volume_2010": (
+                ("inline", "sample", "trace"),
+                da.from_array(support_volume, chunks=(inline_chunk, sample_chunk, trace_chunk)),
+            ),
+            "pair_available": (
+                ("inline", "vintage"),
+                da.from_array(pair_available, chunks=(inline_chunk, vintage_chunk)),
+            ),
+            "pair_name": (("inline", "vintage"), pair_names),
         },
         coords={
-            "vintage": np.array(vintage_names, dtype=object),
+            "inline": np.array(inline_values, dtype=object),
+            "vintage": np.array(vintage_values, dtype=object),
             "sample": np.arange(nt, dtype=np.int32),
             "trace": np.arange(nx, dtype=np.int32),
         },
@@ -115,18 +215,22 @@ def build_volume(config: dict[str, Any]) -> dict[str, Any]:
 
     manifest = {
         "output_store": str(output_store),
-        "vintages": vintage_names,
+        "inlines": inline_values,
+        "vintages": vintage_values,
         "shape": {
-            "vintage": len(vintage_names),
+            "inline": inline_count,
+            "vintage": vintage_count,
             "sample": nt,
             "trace": nx,
         },
         "chunks": {
+            "inline": inline_chunk,
             "vintage": vintage_chunk,
             "sample": sample_chunk,
             "trace": trace_chunk,
         },
         "variables": list(dataset.data_vars),
+        "volume_summary": field_summary.get("volume_summary", {}),
     }
     manifest_path = Path(config["output_root"]) / "results" / "volume_manifest.json"
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -137,29 +241,44 @@ def build_volume(config: dict[str, Any]) -> dict[str, Any]:
 def _filter_outputs(outputs: list[dict[str, Any]], requested_vintages: list[str]) -> list[dict[str, Any]]:
     if not requested_vintages:
         return outputs
-    requested = set(requested_vintages)
-    filtered = [entry for entry in outputs if entry["pair"].name in requested]
+    requested = {str(value) for value in requested_vintages}
+    filtered = [
+        entry
+        for entry in outputs
+        if entry["pair"].name in requested or _vintage_label(entry["pair"]) in requested
+    ]
     if not filtered:
         raise ValueError(f"None of the requested volume vintages were found: {requested_vintages}")
     return filtered
 
 
-def _ensure_cross_equalized(
-    outputs: list[dict[str, Any]],
-    threshold: float,
-    config: dict[str, Any],
-) -> list[dict[str, Any]]:
-    from .baselines import score_cross_equalized_difference
+def _inline_label(pair: Any) -> str:
+    metadata = pair.metadata or {}
+    inline_id = metadata.get("inline_id")
+    return str(inline_id) if inline_id is not None else "default"
 
-    ensured: list[dict[str, Any]] = []
-    for entry in outputs:
-        if "cross_equalized_binary" not in entry:
-            pair = entry["pair"]
-            score = score_cross_equalized_difference(pair.baseline, pair.monitor, pair.reservoir_mask)
-            structured_binary, _ = _cleanup_field_binary(score >= threshold, pair.reservoir_mask, config.get("field", {}))
-            entry = {
-                **entry,
-                "cross_equalized_binary": structured_binary.astype(np.float32),
-            }
-        ensured.append(entry)
-    return ensured
+
+def _vintage_label(pair: Any) -> str:
+    metadata = pair.metadata or {}
+    vintage = metadata.get("vintage")
+    return str(vintage) if vintage is not None else pair.name
+
+
+def _sort_axis_values(values: set[str], preferred: list[Any] | None = None) -> list[str]:
+    if preferred:
+        normalized = [str(value) for value in preferred]
+        extras = sorted(
+            [value for value in values if value not in set(normalized)],
+            key=lambda item: (not item.isdigit(), int(item) if item.isdigit() else item),
+        )
+        return normalized + extras
+    return sorted(values, key=lambda item: (not item.isdigit(), int(item) if item.isdigit() else item))
+
+
+def _resolve_inline_vintage_axes(outputs: list[dict[str, Any]], volume_cfg: dict[str, Any]) -> tuple[list[str], list[str]]:
+    inline_values = {_inline_label(entry["pair"]) for entry in outputs}
+    vintage_values = {_vintage_label(entry["pair"]) for entry in outputs}
+    return (
+        _sort_axis_values(inline_values, volume_cfg.get("inline_order", [])),
+        _sort_axis_values(vintage_values, volume_cfg.get("vintage_order", [])),
+    )

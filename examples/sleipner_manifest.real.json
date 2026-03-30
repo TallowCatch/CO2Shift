@@ -1,18 +1,95 @@
 {
-  "baseline": "exports/sleipner_1994_baseline.npy",
-  "reservoir_mask": "exports/sleipner_storage_interval_mask.npy",
+  "support_note": "2010 plume-boundary support is used as a later-time structural envelope, not as exact ground truth for earlier vintages. Each pair carries its own inline-aligned benchmark support-volume proxy.",
   "pairs": [
     {
-      "name": "sleipner_2001_inline_1840_mid",
-      "monitor": "exports/sleipner_2001_monitor.npy"
+      "name": "sleipner_2001_inline_1838_p07_mid",
+      "baseline": "exports/sleipner_1994_inline_1838_p07.npy",
+      "monitor": "exports/sleipner_2001_inline_1838_p07.npy",
+      "reservoir_mask": "exports/sleipner_storage_interval_mask_inline_1838_p07.npy",
+      "support_mask": "exports/sleipner_2010_support_volume_inline_1838_p07.npy",
+      "inline_id": 1838,
+      "vintage": 2001,
+      "processing_family": "p07"
     },
     {
-      "name": "sleipner_2004_inline_1840_mid",
-      "monitor": "exports/sleipner_2004_monitor.npy"
+      "name": "sleipner_2004_inline_1838_p07_mid",
+      "baseline": "exports/sleipner_1994_inline_1838_p07.npy",
+      "monitor": "exports/sleipner_2004_inline_1838_p07.npy",
+      "reservoir_mask": "exports/sleipner_storage_interval_mask_inline_1838_p07.npy",
+      "support_mask": "exports/sleipner_2010_support_volume_inline_1838_p07.npy",
+      "inline_id": 1838,
+      "vintage": 2004,
+      "processing_family": "p07"
     },
     {
-      "name": "sleipner_2006_inline_1840_mid",
-      "monitor": "exports/sleipner_2006_monitor.npy"
+      "name": "sleipner_2006_inline_1838_p07_mid",
+      "baseline": "exports/sleipner_1994_inline_1838_p07.npy",
+      "monitor": "exports/sleipner_2006_inline_1838_p07.npy",
+      "reservoir_mask": "exports/sleipner_storage_interval_mask_inline_1838_p07.npy",
+      "support_mask": "exports/sleipner_2010_support_volume_inline_1838_p07.npy",
+      "inline_id": 1838,
+      "vintage": 2006,
+      "processing_family": "p07"
+    },
+    {
+      "name": "sleipner_2001_inline_1840_p07_mid",
+      "baseline": "exports/sleipner_1994_inline_1840_p07.npy",
+      "monitor": "exports/sleipner_2001_inline_1840_p07.npy",
+      "reservoir_mask": "exports/sleipner_storage_interval_mask_inline_1840_p07.npy",
+      "support_mask": "exports/sleipner_2010_support_volume_inline_1840_p07.npy",
+      "inline_id": 1840,
+      "vintage": 2001,
+      "processing_family": "p07"
+    },
+    {
+      "name": "sleipner_2004_inline_1840_p07_mid",
+      "baseline": "exports/sleipner_1994_inline_1840_p07.npy",
+      "monitor": "exports/sleipner_2004_inline_1840_p07.npy",
+      "reservoir_mask": "exports/sleipner_storage_interval_mask_inline_1840_p07.npy",
+      "support_mask": "exports/sleipner_2010_support_volume_inline_1840_p07.npy",
+      "inline_id": 1840,
+      "vintage": 2004,
+      "processing_family": "p07"
+    },
+    {
+      "name": "sleipner_2006_inline_1840_p07_mid",
+      "baseline": "exports/sleipner_1994_inline_1840_p07.npy",
+      "monitor": "exports/sleipner_2006_inline_1840_p07.npy",
+      "reservoir_mask": "exports/sleipner_storage_interval_mask_inline_1840_p07.npy",
+      "support_mask": "exports/sleipner_2010_support_volume_inline_1840_p07.npy",
+      "inline_id": 1840,
+      "vintage": 2006,
+      "processing_family": "p07"
+    },
+    {
+      "name": "sleipner_2001_inline_1842_p07_mid",
+      "baseline": "exports/sleipner_1994_inline_1842_p07.npy",
+      "monitor": "exports/sleipner_2001_inline_1842_p07.npy",
+      "reservoir_mask": "exports/sleipner_storage_interval_mask_inline_1842_p07.npy",
+      "support_mask": "exports/sleipner_2010_support_volume_inline_1842_p07.npy",
+      "inline_id": 1842,
+      "vintage": 2001,
+      "processing_family": "p07"
+    },
+    {
+      "name": "sleipner_2004_inline_1842_p07_mid",
+      "baseline": "exports/sleipner_1994_inline_1842_p07.npy",
+      "monitor": "exports/sleipner_2004_inline_1842_p07.npy",
+      "reservoir_mask": "exports/sleipner_storage_interval_mask_inline_1842_p07.npy",
+      "support_mask": "exports/sleipner_2010_support_volume_inline_1842_p07.npy",
+      "inline_id": 1842,
+      "vintage": 2004,
+      "processing_family": "p07"
+    },
+    {
+      "name": "sleipner_2006_inline_1842_p07_mid",
+      "baseline": "exports/sleipner_1994_inline_1842_p07.npy",
+      "monitor": "exports/sleipner_2006_inline_1842_p07.npy",
+      "reservoir_mask": "exports/sleipner_storage_interval_mask_inline_1842_p07.npy",
+      "support_mask": "exports/sleipner_2010_support_volume_inline_1842_p07.npy",
+      "inline_id": 1842,
+      "vintage": 2006,
+      "processing_family": "p07"
     }
   ]
 }

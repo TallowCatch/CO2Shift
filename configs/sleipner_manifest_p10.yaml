@@ -7,8 +7,8 @@ field:
   mode: manifest
   path: ""
   manifest_path: examples/sleipner_manifest.p10.json
-  benchmark_root: /tmp/sleipner_benchmark/extract/velocities_trends_surfaces/data
-  plume_boundaries_root: /tmp/sleipner_benchmark/extract/Sleipner_Plumes_Boundaries/data
+  benchmark_root: /tmp/sleipner_benchmark_restore/velocities_trends_surfaces/data
+  plume_boundaries_root: /tmp/sleipner_benchmark_restore/Sleipner_Plumes_Boundaries/data
   segy_path: examples/exports/raw/94p10mid.sgy
   export_segy_path: examples/exports/raw/10p10mid.sgy
   export_output_path: examples/exports/sleipner_2010_monitor_p10.npy
@@ -18,6 +18,7 @@ field:
   inline_number: 1840
   output_mask_path: examples/exports/sleipner_storage_interval_mask_p10.npy
   output_plume_support_path: examples/exports/sleipner_2010_plume_support_traces_p10.npy
+  output_support_volume_path: examples/exports/sleipner_2010_support_volume_inline_1840_p10.npy
   plume_support_path: examples/exports/sleipner_2010_plume_support_traces_p10.npy
   plume_support_note: "2010 plume-boundary support is a same-year structural benchmark for the 2010 monitor, but it is still a support envelope rather than an exact pixel-level plume label."
   postprocess:

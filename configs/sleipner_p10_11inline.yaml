@@ -1,0 +1,72 @@
+seed: 11
+output_root: runs/sleipner_p10_11inline
+artifacts_root: runs/paper_proto
+training:
+  device: cpu
+  mc_dropout_passes: 8
+field:
+  enabled: true
+  mode: manifest
+  manifest_path: examples/sleipner_manifest.p10_11inline.json
+  output_manifest_path: examples/sleipner_manifest.p10_11inline.json
+  processing_family: p10
+  source_tag: mid
+  benchmark_root: /tmp/sleipner_benchmark_restore/velocities_trends_surfaces/data
+  plume_boundaries_root: /tmp/sleipner_benchmark_restore/Sleipner_Plumes_Boundaries/data
+  inline_numbers:
+  - 1835
+  - 1836
+  - 1837
+  - 1838
+  - 1839
+  - 1840
+  - 1841
+  - 1842
+  - 1843
+  - 1844
+  - 1845
+  vintage_map:
+    1994: examples/exports/raw/94p10mid.sgy
+    2010: examples/exports/raw/10p10mid.sgy
+  output_support_volume_path_template: exports/sleipner_2010_support_volume_inline_{inline}_p10.npy
+  plume_support_note: 2010 plume-boundary support is a same-year structural benchmark
+    for the 2010 monitor, but it remains a support envelope rather than an exact pixel-level
+    plume label. This 11-inline public benchmark keeps p10 separate from the p07 temporal
+    sequence.
+  postprocess:
+    enabled: true
+    threshold_mode: quantile
+    probability_quantile: 0.92
+    min_probability_threshold: 0.5
+    uncertainty_quantile: 0.85
+    shared_across_pairs: true
+    shared_use_reservoir_region: true
+    apply_reservoir_mask: true
+    closing_iterations: 1
+    opening_iterations: 1
+    min_component_size: 400
+    keep_largest_components: 3
+  pseudo3d:
+    enabled: true
+    window_size: 3
+    method: uncertainty_weighted_mean
+    closing_iterations: 1
+    opening_iterations: 0
+    min_component_size: 900
+    keep_largest_components: 3
+  structured_support:
+    enabled: true
+    trace_window_size: 3
+    trace_vote_fraction: 0.34
+    vertical_sigma: 1.25
+    column_relative_threshold: 0.45
+    min_peak_probability: 0.5
+    vertical_margin: 2
+    closing_iterations: 0
+    opening_iterations: 0
+    min_component_size: 0
+    keep_largest_components: 0
+evaluation:
+  save_figures: false
+report:
+  title: CO2Shift pseudo-3D Sleipner p10 benchmark

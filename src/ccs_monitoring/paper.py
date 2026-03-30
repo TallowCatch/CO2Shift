@@ -4,16 +4,14 @@ from __future__ import annotations
 
 import csv
 import json
-from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
 import matplotlib.pyplot as plt
-import matplotlib.image as mpimg
 import numpy as np
+import xarray as xr
 
 from .config import load_config
-from .field_tools import collect_field_prediction_bundle, summarize_field_prediction_bundle
 from .runtime import ensure_runtime_environment
 
 
@@ -27,29 +25,39 @@ def build_paper_evidence(config: dict[str, Any]) -> dict[str, Any]:
 
     paper_cfg = config["paper_evidence"]
     synthetic_metrics = _load_json(paper_cfg["synthetic_metrics_path"])
-    field_summary = _load_json(paper_cfg["field_summary_path"])
-    direct_summary = _load_json(paper_cfg["direct_summary_path"])
-    field_config = load_config(paper_cfg["field_config_path"])
+    field_summary_payload = _load_json(paper_cfg["field_summary_path"])
+    direct_summary_payload = _load_json(paper_cfg["direct_summary_path"])
     direct_config = load_config(paper_cfg["direct_config_path"])
+    field_volume_summary = _extract_volume_summary(field_summary_payload)
+    direct_volume_summary = _extract_volume_summary(direct_summary_payload)
 
     synthetic_rows = _build_synthetic_rows(synthetic_metrics)
-    field_rows = _build_field_rows(field_summary["Field"])
-    direct_rows = _build_direct_rows(direct_summary["Field"])
-    ablation_rows = _build_ablation_rows(field_config)
+    negative_control_rows = _build_negative_control_rows(synthetic_metrics)
+    field_rows = _build_field_rows(field_volume_summary)
+    direct_rows = _build_direct_rows(direct_volume_summary)
+    ablation_rows = _build_ablation_rows(field_volume_summary, direct_volume_summary)
     panel_path = figures_dir / "paper_direct_2010_panel.png"
-    _build_direct_panel(direct_config, panel_path)
+    _build_direct_panel(direct_config, direct_volume_summary, panel_path)
 
     evidence_summary = {
         "claim": paper_cfg["claim"],
+        "provenance": {
+            "synthetic_metrics_path": str(Path(paper_cfg["synthetic_metrics_path"])),
+            "field_summary_path": str(Path(paper_cfg["field_summary_path"])),
+            "direct_summary_path": str(Path(paper_cfg["direct_summary_path"])),
+            "field_config_path": str(Path(paper_cfg["field_config_path"])),
+            "direct_config_path": str(Path(paper_cfg["direct_config_path"])),
+        },
         "synthetic_rows": synthetic_rows,
         "field_rows": field_rows,
         "direct_rows": direct_rows,
         "ablation_rows": ablation_rows,
+        "negative_control_rows": negative_control_rows,
         "methods_results_block": _build_methods_results_block(
             paper_cfg["claim"],
             synthetic_metrics,
-            field_summary["Field"],
-            direct_summary["Field"],
+            field_volume_summary,
+            direct_volume_summary,
         ),
         "panel_path": str(panel_path),
     }
@@ -59,6 +67,7 @@ def build_paper_evidence(config: dict[str, Any]) -> dict[str, Any]:
     _write_csv(results_dir / "paper_field_table.csv", field_rows)
     _write_csv(results_dir / "paper_direct_table.csv", direct_rows)
     _write_csv(results_dir / "paper_ablation_table.csv", ablation_rows)
+    _write_csv(results_dir / "paper_negative_controls.csv", negative_control_rows)
     (results_dir / "methods_results_block.txt").write_text(
         evidence_summary["methods_results_block"],
         encoding="utf-8",
@@ -84,111 +93,175 @@ def _build_synthetic_rows(metrics: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
-def _build_field_rows(field_summary: dict[str, Any]) -> list[dict[str, Any]]:
+def _build_negative_control_rows(metrics: dict[str, Any]) -> list[dict[str, Any]]:
+    scenario_breakdown = metrics.get("ood", {}).get("scenario_breakdown", {})
+    target_scenarios = ["no_change", "mismatch_only", "out_of_zone"]
     rows: list[dict[str, Any]] = []
-    for pair_name, metrics in field_summary["pairs"].items():
-        rows.append(
-            {
-                "pair": pair_name,
-                "cross_eq_trace_iou_2010": float(metrics["cross_equalized_difference"]["trace_iou_with_2010_support"]),
-                "cross_eq_trace_fraction": float(metrics["cross_equalized_difference"]["predicted_trace_fraction"]),
-                "hybrid_constrained_trace_iou_2010": float(
-                    metrics["hybrid_ml_constrained"]["trace_iou_with_2010_support"]
-                ),
-                "hybrid_constrained_trace_fraction": float(
-                    metrics["hybrid_ml_constrained"]["predicted_trace_fraction"]
-                ),
-                "hybrid_constrained_outside_reservoir": float(
-                    metrics["hybrid_ml_constrained"]["outside_reservoir_fraction"]
-                ),
-            }
-        )
+    for scenario_name in target_scenarios:
+        scenario_metrics = scenario_breakdown.get(scenario_name)
+        if not isinstance(scenario_metrics, dict):
+            continue
+        for method_name in ("difference", "nrms_difference", "plain_ml", "hybrid_ml"):
+            method_metrics = scenario_metrics.get(method_name)
+            if not isinstance(method_metrics, dict):
+                continue
+            rows.append(
+                {
+                    "scenario": scenario_name,
+                    "method": method_name,
+                    "num_samples": int(scenario_metrics.get("num_samples", 0)),
+                    "false_positive_rate": float(method_metrics.get("false_positive_rate", float("nan"))),
+                    "dice": float(method_metrics.get("dice", float("nan"))),
+                    "ece": float(method_metrics.get("ece", float("nan"))),
+                    "risk_coverage_auc": float(method_metrics.get("risk_coverage_auc", float("nan"))),
+                }
+            )
     return rows
 
 
-def _build_direct_rows(field_summary: dict[str, Any]) -> list[dict[str, Any]]:
-    pair_name = next(iter(field_summary["pairs"]))
-    pair_metrics = field_summary["pairs"][pair_name]
-    return [
-        {
-            "pair": pair_name,
-            "method": "cross_equalized_difference",
-            "predicted_trace_fraction": float(pair_metrics["cross_equalized_difference"]["predicted_trace_fraction"]),
-            "trace_iou_with_2010_support": float(
-                pair_metrics["cross_equalized_difference"]["trace_iou_with_2010_support"]
-            ),
-            "trace_fraction_outside_2010_support": float(
-                pair_metrics["cross_equalized_difference"]["trace_fraction_outside_2010_support"]
-            ),
-        },
-        {
-            "pair": pair_name,
-            "method": "hybrid_ml_constrained",
-            "predicted_trace_fraction": float(pair_metrics["hybrid_ml_constrained"]["predicted_trace_fraction"]),
-            "trace_iou_with_2010_support": float(pair_metrics["hybrid_ml_constrained"]["trace_iou_with_2010_support"]),
-            "trace_fraction_outside_2010_support": float(
-                pair_metrics["hybrid_ml_constrained"]["trace_fraction_outside_2010_support"]
-            ),
-        },
+def _extract_volume_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    if "volume_summary" in payload:
+        return payload["volume_summary"]
+    if "Field" in payload and isinstance(payload["Field"], dict) and "volume_summary" in payload["Field"]:
+        return payload["Field"]["volume_summary"]
+    raise KeyError("Expected a volume_summary payload or a summary.json containing Field.volume_summary.")
+
+
+def _build_field_rows(volume_summary: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    methods = [
+        "best_classical_constrained",
+        "plain_ml_constrained",
+        "plain_ml_structured_constrained",
+        "hybrid_ml_constrained",
+        "hybrid_ml_structured_constrained",
     ]
-
-
-def _build_ablation_rows(field_config: dict[str, Any]) -> list[dict[str, Any]]:
-    variant_cfgs = {
-        "baseline_protocol": deepcopy(field_config),
-        "no_shared_thresholds": deepcopy(field_config),
-        "no_reservoir_constraint": deepcopy(field_config),
-        "no_uncertainty_gating": deepcopy(field_config),
-    }
-    variant_cfgs["no_shared_thresholds"]["field"]["postprocess"]["shared_across_pairs"] = False
-    variant_cfgs["no_reservoir_constraint"]["field"]["postprocess"]["apply_reservoir_mask"] = False
-    variant_cfgs["no_uncertainty_gating"]["field"]["postprocess"]["uncertainty_quantile"] = 1.0
-
-    base_bundle = collect_field_prediction_bundle(field_config)
-    rows: list[dict[str, Any]] = []
-    for name, variant_cfg in variant_cfgs.items():
-        summary = summarize_field_prediction_bundle(variant_cfg, base_bundle)
-        support_iou_values = [
-            float(pair_metrics["hybrid_ml_constrained"].get("trace_iou_with_2010_support", float("nan")))
-            for pair_metrics in summary["pairs"].values()
-        ]
-        trace_fraction_values = [
-            float(pair_metrics["hybrid_ml_constrained"].get("predicted_trace_fraction", float("nan")))
-            for pair_metrics in summary["pairs"].values()
-        ]
+    for vintage, method_metrics in volume_summary.get("by_vintage", {}).items():
+        for method_name in methods:
+            if method_name not in method_metrics:
+                continue
+            metrics = method_metrics[method_name]
+            rows.append(
+                {
+                    "benchmark": "p07_temporal",
+                    "scope": "by_vintage",
+                    "vintage": vintage,
+                    "method": method_name,
+                    "trace_iou_with_2010_support": float(metrics.get("trace_iou_with_2010_support", float("nan"))),
+                    "support_volume_iou_2010": float(metrics.get("support_volume_iou_2010", float("nan"))),
+                    "crossline_continuity": float(metrics.get("crossline_continuity", float("nan"))),
+                    "predicted_trace_fraction": float(metrics.get("predicted_trace_fraction", float("nan"))),
+                    "predicted_fraction": float(metrics.get("predicted_fraction", float("nan"))),
+                }
+            )
+    for method_name in methods:
+        metrics = volume_summary.get("overall", {}).get(method_name)
+        if not isinstance(metrics, dict):
+            continue
         rows.append(
             {
-                "variant": name,
-                "mean_trace_iou_2010_support": float(np.nanmean(support_iou_values)),
-                "mean_predicted_trace_fraction": float(np.nanmean(trace_fraction_values)),
-                "mean_outside_reservoir_fraction": float(summary["hybrid_constrained_average"]["outside_reservoir_fraction"]),
-                "support_iou_non_decreasing": bool(
-                    summary.get("temporal_consistency", {}).get("constrained_support_iou_non_decreasing", False)
-                ),
-                "trace_fraction_non_decreasing": bool(
-                    summary.get("temporal_consistency", {}).get("constrained_trace_fraction_non_decreasing", False)
+                "benchmark": "p07_temporal",
+                "scope": "overall",
+                "vintage": "all",
+                "method": method_name,
+                "trace_iou_with_2010_support": float(metrics.get("trace_iou_with_2010_support", float("nan"))),
+                "support_volume_iou_2010": float(metrics.get("support_volume_iou_2010", float("nan"))),
+                "crossline_continuity": float(metrics.get("crossline_continuity", float("nan"))),
+                "predicted_trace_fraction": float(metrics.get("predicted_trace_fraction", float("nan"))),
+                "predicted_fraction": float(metrics.get("predicted_fraction", float("nan"))),
+            }
+        )
+    return rows
+
+
+def _build_direct_rows(volume_summary: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for method_name in [
+        "best_classical_constrained",
+        "plain_ml_constrained",
+        "plain_ml_structured_constrained",
+        "hybrid_ml_constrained",
+        "hybrid_ml_structured_constrained",
+    ]:
+        metrics = volume_summary.get("overall", {}).get(method_name)
+        if not isinstance(metrics, dict):
+            continue
+        rows.append(
+            {
+                "benchmark": "p10_direct",
+                "method": method_name,
+                "predicted_trace_fraction": float(metrics.get("predicted_trace_fraction", float("nan"))),
+                "trace_iou_with_2010_support": float(metrics.get("trace_iou_with_2010_support", float("nan"))),
+                "support_volume_iou_2010": float(metrics.get("support_volume_iou_2010", float("nan"))),
+                "crossline_continuity": float(metrics.get("crossline_continuity", float("nan"))),
+                "predicted_fraction_outside_support_volume": float(
+                    metrics.get("predicted_fraction_outside_support_volume", float("nan"))
                 ),
             }
         )
     return rows
 
 
-def _build_direct_panel(config: dict[str, Any], destination: Path) -> None:
+def _build_ablation_rows(field_volume_summary: dict[str, Any], direct_volume_summary: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for benchmark_name, volume_summary in [("p07_temporal", field_volume_summary), ("p10_direct", direct_volume_summary)]:
+        for method_name in [
+            "best_classical_constrained",
+            "plain_ml_constrained",
+            "plain_ml_structured_constrained",
+            "hybrid_ml_constrained",
+            "hybrid_ml_structured_constrained",
+        ]:
+            metrics = volume_summary.get("overall", {}).get(method_name)
+            if not isinstance(metrics, dict):
+                continue
+            rows.append(
+                {
+                    "benchmark": benchmark_name,
+                    "variant": method_name,
+                    "trace_iou_with_2010_support": float(metrics.get("trace_iou_with_2010_support", float("nan"))),
+                    "support_volume_iou_2010": float(metrics.get("support_volume_iou_2010", float("nan"))),
+                    "crossline_continuity": float(metrics.get("crossline_continuity", float("nan"))),
+                    "predicted_fraction_outside_support_volume": float(
+                        metrics.get("predicted_fraction_outside_support_volume", float("nan"))
+                    ),
+                }
+            )
+    return rows
+
+
+def _build_direct_panel(config: dict[str, Any], volume_summary: dict[str, Any], destination: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
-    image_paths = [
-        Path(config["output_root"]) / "results" / "figures" / "field_sleipner_2010_inline_1840_p10_mid_cross_equalized_difference.png",
-        Path(config["output_root"]) / "results" / "figures" / "field_sleipner_2010_inline_1840_p10_mid_hybrid_example.png",
-        Path(config["output_root"]) / "results" / "figures" / "field_sleipner_2010_inline_1840_p10_mid_hybrid_constrained.png",
-    ]
+    store_path = Path(config["volume"].get("output_store") or (Path(config["output_root"]) / "volume.zarr"))
+    dataset = xr.open_zarr(store_path)
+    inline_values = [str(value) for value in dataset.coords["inline"].values.tolist()]
+    inline_index = inline_values.index("1840") if "1840" in inline_values else len(inline_values) // 2
+    benchmark_image = np.asarray(dataset["support_volume_2010"].isel(inline=inline_index).values, dtype=np.float32)
+    classical_image = np.asarray(
+        dataset["best_classical_constrained"].isel(inline=inline_index, vintage=-1).values,
+        dtype=np.float32,
+    )
+    plain_image = np.asarray(
+        dataset["plain_ml_constrained"].isel(inline=inline_index, vintage=-1).values,
+        dtype=np.float32,
+    )
+    structured_image = np.asarray(
+        dataset["plain_ml_structured_constrained"].isel(inline=inline_index, vintage=-1).values,
+        dtype=np.float32,
+    )
     titles = [
-        "A. Cross-equalized baseline",
-        "B. Raw hybrid",
-        "C. Constrained hybrid",
+        f"A. Best classical ({volume_summary['overall']['best_classical_constrained']['support_volume_iou_2010']:.3f})",
+        f"B. Plain ML ({volume_summary['overall']['plain_ml_constrained']['support_volume_iou_2010']:.3f})",
+        (
+            "C. Plain ML + structured support "
+            f"({volume_summary['overall']['plain_ml_structured_constrained']['support_volume_iou_2010']:.3f})"
+        ),
+        "D. Benchmark support",
     ]
-    fig, axes = plt.subplots(1, 3, figsize=(16, 5))
-    for axis, image_path, title in zip(axes, image_paths, titles):
-        image = mpimg.imread(image_path)
-        axis.imshow(image)
+    images = [classical_image, plain_image, structured_image, benchmark_image]
+    fig, axes = plt.subplots(1, 4, figsize=(20, 5))
+    for axis, image, title in zip(axes, images, titles):
+        axis.imshow(image, cmap="magma", aspect="auto", vmin=0.0, vmax=1.0)
         axis.set_title(title)
         axis.axis("off")
     fig.tight_layout()
@@ -199,36 +272,54 @@ def _build_direct_panel(config: dict[str, Any], destination: Path) -> None:
 def _build_methods_results_block(
     claim: str,
     synthetic_metrics: dict[str, Any],
-    field_summary: dict[str, Any],
-    direct_summary: dict[str, Any],
+    field_volume_summary: dict[str, Any],
+    direct_volume_summary: dict[str, Any],
 ) -> str:
     classical_method = _synthetic_classical_method(synthetic_metrics)
-    direct_pair_name = next(iter(direct_summary["pairs"]))
-    direct_pair = direct_summary["pairs"][direct_pair_name]
-    p07_temporal = field_summary["temporal_consistency"]
+    p07_plain = field_volume_summary["overall"]["plain_ml_constrained"]
+    p07_structured = field_volume_summary["overall"]["plain_ml_structured_constrained"]
+    p10_plain = direct_volume_summary["overall"]["plain_ml_constrained"]
+    p10_structured = direct_volume_summary["overall"]["plain_ml_structured_constrained"]
+    p10_classical = direct_volume_summary["overall"]["best_classical_constrained"]
+    p10_hybrid = direct_volume_summary["overall"]["hybrid_ml_constrained"]
     return (
         f"Claim: {claim}\n\n"
-        "Methods: We keep the 2D PyTorch hybrid model as the baseline of record and evaluate it against "
-        "plain ML and a cross-equalized classical baseline. Field predictions are benchmark-constrained "
-        "using the public Sleipner storage-interval mask and shared-threshold postprocessing.\n\n"
-        f"Results: On synthetic OOD data, the hybrid model reaches Dice {synthetic_metrics['ood']['hybrid_ml']['dice']:.3f} "
-        f"versus {synthetic_metrics['ood']['plain_ml']['dice']:.3f} for plain ML and "
-        f"{synthetic_metrics['ood'][classical_method]['dice']:.3f} for the classical baseline. "
-        f"Across the p07 field sequence, constrained support overlap with the 2010 benchmark increases from "
-        f"{p07_temporal['constrained_support_iou_by_pair']['sleipner_2001_inline_1840_mid']:.3f} to "
-        f"{p07_temporal['constrained_support_iou_by_pair']['sleipner_2006_inline_1840_mid']:.3f}. "
-        f"On the direct 2010 p10 audit, the constrained hybrid reaches trace IoU "
-        f"{direct_pair['hybrid_ml_constrained']['trace_iou_with_2010_support']:.3f}, compared with "
-        f"{direct_pair['cross_equalized_difference']['trace_iou_with_2010_support']:.3f} for the cross-equalized baseline. "
-        "The raw field model still leaks strongly outside the reservoir before constraining, so the defensible "
-        "claim is about benchmark-constrained support mapping rather than unconstrained field inversion."
+        "Methods: We keep the 2D PyTorch models and classical baselines, but the main field-facing result now "
+        "centers on plain ML plus structured support reconstruction rather than the hybrid model. Field outputs "
+        "are benchmark-constrained using the public Sleipner storage interval, and the 3D evidence is reported "
+        "on 11-inline pseudo-3D p07 and p10 benchmarks.\n\n"
+        f"Results: On the harder benchmark-v2 synthetic OOD split, plain ML reaches Dice "
+        f"{synthetic_metrics['ood']['plain_ml']['dice']:.3f}, the hybrid model reaches "
+        f"{synthetic_metrics['ood']['hybrid_ml']['dice']:.3f}, and the strongest classical synthetic baseline "
+        f"({classical_method}) reaches {synthetic_metrics['ood'][classical_method]['dice']:.3f}. "
+        f"On the 11-inline p07 temporal benchmark, structured plain ML improves support-volume IoU from "
+        f"{p07_plain['support_volume_iou_2010']:.3f} to {p07_structured['support_volume_iou_2010']:.3f}, "
+        f"while slightly improving trace-support IoU from {p07_plain['trace_iou_with_2010_support']:.3f} to "
+        f"{p07_structured['trace_iou_with_2010_support']:.3f} and crossline continuity from "
+        f"{p07_plain['crossline_continuity']:.3f} to {p07_structured['crossline_continuity']:.3f}. "
+        f"On the direct 11-inline p10 benchmark, structured plain ML improves support-volume IoU from "
+        f"{p10_plain['support_volume_iou_2010']:.3f} to {p10_structured['support_volume_iou_2010']:.3f}, "
+        f"retains lateral support alignment ({p10_plain['trace_iou_with_2010_support']:.3f} vs "
+        f"{p10_structured['trace_iou_with_2010_support']:.3f}), and exceeds the best constrained classical "
+        f"baseline on support-volume IoU ({p10_structured['support_volume_iou_2010']:.3f} vs "
+        f"{p10_classical['support_volume_iou_2010']:.3f}). "
+        f"The hybrid field outputs remain weaker on the direct benchmark "
+        f"({p10_hybrid['support_volume_iou_2010']:.3f} support-volume IoU), so the current defensible field claim "
+        "should center on structured plain-ML support mapping rather than the hybrid model."
     )
 
 
 def _synthetic_classical_method(metrics: dict[str, Any]) -> str:
-    if "cross_equalized_difference" in metrics["ood"]:
-        return "cross_equalized_difference"
-    return "difference"
+    candidates = [
+        method_name
+        for method_name in metrics["ood"]
+        if method_name not in {"plain_ml", "hybrid_ml", "runtime_seconds", "scenario_breakdown"}
+        and isinstance(metrics["ood"][method_name], dict)
+        and "dice" in metrics["ood"][method_name]
+    ]
+    if not candidates:
+        return "difference"
+    return max(candidates, key=lambda name: float(metrics["ood"][name]["dice"]))
 
 
 def _load_json(path: str | Path) -> dict[str, Any]:

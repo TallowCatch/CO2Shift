@@ -1,10 +1,15 @@
 {
   "baseline": "exports/sleipner_1994_baseline_p10.npy",
   "reservoir_mask": "exports/sleipner_storage_interval_mask_p10.npy",
+  "support_mask": "exports/sleipner_2010_support_volume_inline_1840_p10.npy",
+  "support_note": "2010 plume-boundary support is a same-year structural benchmark for the 2010 monitor, but it is still a support envelope rather than an exact pixel-level plume label.",
   "pairs": [
     {
       "name": "sleipner_2010_inline_1840_p10_mid",
-      "monitor": "exports/sleipner_2010_monitor_p10.npy"
+      "monitor": "exports/sleipner_2010_monitor_p10.npy",
+      "inline_id": 1840,
+      "vintage": 2010,
+      "processing_family": "p10"
     }
   ]
 }

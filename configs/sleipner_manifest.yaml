@@ -6,8 +6,8 @@ field:
   mode: manifest
   path: ""
   manifest_path: examples/sleipner_manifest.real.json
-  benchmark_root: /tmp/sleipner_benchmark/extract/velocities_trends_surfaces/data
-  plume_boundaries_root: /tmp/sleipner_benchmark/extract/Sleipner_Plumes_Boundaries/data
+  benchmark_root: /tmp/sleipner_benchmark_restore/velocities_trends_surfaces/data
+  plume_boundaries_root: /tmp/sleipner_benchmark_restore/Sleipner_Plumes_Boundaries/data
   segy_path: examples/exports/raw/94p07mid.sgy
   export_segy_path: examples/exports/raw/04p07mid.sgy
   export_output_path: examples/exports/sleipner_2004_monitor.npy
@@ -17,8 +17,9 @@ field:
   inline_number: 1840
   output_mask_path: examples/exports/sleipner_storage_interval_mask.npy
   output_plume_support_path: examples/exports/sleipner_2010_plume_support_traces.npy
-  plume_support_path: examples/exports/sleipner_2010_plume_support_traces.npy
-  plume_support_note: "2010 plume-boundary support is used as a later-time structural envelope, not as exact ground truth for the earlier 2001/2004/2006 vintages."
+  output_support_volume_path: examples/exports/sleipner_2010_support_volume_inline_1840_p07.npy
+  plume_support_path: ""
+  plume_support_note: "2010 plume-boundary support is used as a later-time structural envelope, not as exact ground truth for the earlier 2001/2004/2006 vintages. The multi-inline manifest uses inline-specific support-volume proxies."
   postprocess:
     enabled: true
     threshold_mode: quantile

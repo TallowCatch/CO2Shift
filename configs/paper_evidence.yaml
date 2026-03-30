@@ -3,12 +3,12 @@ output_root: runs/paper_evidence
 
 paper_evidence:
   enabled: true
-  claim: "Benchmark-constrained hybrid monitoring yields more selective and more benchmark-aligned lateral plume-support maps than plain ML or a cross-equalized classical baseline on public Sleipner data."
+  claim: "Benchmark-constrained plain ML with structured support reconstruction yields stronger pseudo-3D plume-support volumes than plain ML alone or constrained classical baselines on public Sleipner data, while preserving lateral support alignment."
   synthetic_metrics_path: runs/paper_proto/results/metrics.json
-  field_summary_path: runs/sleipner_manifest/results/summary.json
-  direct_summary_path: runs/sleipner_manifest_p10/results/summary.json
-  field_config_path: configs/sleipner_manifest.yaml
-  direct_config_path: configs/sleipner_manifest_p10.yaml
+  field_summary_path: runs/sleipner_p07_11inline/results/volume_manifest.json
+  direct_summary_path: runs/sleipner_p10_11inline/results/volume_manifest.json
+  field_config_path: configs/sleipner_p07_11inline_volume.yaml
+  direct_config_path: configs/sleipner_p10_11inline_volume.yaml
 
 report:
   title: "CO2Shift paper evidence pack"

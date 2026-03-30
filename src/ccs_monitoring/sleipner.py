@@ -371,3 +371,208 @@ def export_sleipner_plume_support_traces(
     }
     metadata_path.write_text(json.dumps(metadata_payload, indent=2), encoding="utf-8")
     return metadata_payload
+
+
+def export_sleipner_support_volume_proxy(
+    reservoir_mask_path: str | Path,
+    plume_support_path: str | Path,
+    output_support_volume_path: str | Path,
+) -> dict[str, Any]:
+    reservoir_mask = np.load(reservoir_mask_path).astype(np.float32)
+    plume_support = np.load(plume_support_path).astype(np.float32)
+    if reservoir_mask.ndim != 2:
+        raise ValueError(
+            f"Reservoir mask must be a 2D [sample, trace] array; received shape {reservoir_mask.shape}."
+        )
+
+    if plume_support.ndim == 1:
+        if plume_support.shape[0] != reservoir_mask.shape[1]:
+            raise ValueError(
+                "1D plume support length must match the number of traces in the reservoir mask: "
+                f"{plume_support.shape[0]} vs {reservoir_mask.shape[1]}."
+            )
+        support_volume = (reservoir_mask > 0.5) & (plume_support[None, :] > 0.5)
+        source_mode = "trace_support_times_reservoir_mask"
+    elif plume_support.ndim == 2:
+        if plume_support.shape != reservoir_mask.shape:
+            raise ValueError(
+                "2D plume support must match the reservoir-mask shape exactly: "
+                f"{plume_support.shape} vs {reservoir_mask.shape}."
+            )
+        support_volume = (reservoir_mask > 0.5) & (plume_support > 0.5)
+        source_mode = "support_mask_intersected_with_reservoir_mask"
+    else:
+        raise ValueError(
+            f"Plume support must be either 1D trace support or 2D support mask; received shape {plume_support.shape}."
+        )
+
+    output_support_volume_path = Path(output_support_volume_path)
+    output_support_volume_path.parent.mkdir(parents=True, exist_ok=True)
+    np.save(output_support_volume_path, support_volume.astype(np.float32))
+
+    metadata_path = output_support_volume_path.with_suffix(".metadata.json")
+    metadata = {
+        "reservoir_mask_path": str(reservoir_mask_path),
+        "plume_support_path": str(plume_support_path),
+        "output_support_volume_path": str(output_support_volume_path),
+        "metadata_path": str(metadata_path),
+        "shape": [int(dimension) for dimension in support_volume.shape],
+        "support_fraction": float(np.mean(support_volume)),
+        "source_mode": source_mode,
+        "note": (
+            "This support volume is a benchmark-derived structural proxy built by combining the storage-interval "
+            "mask with public 2010 plume support. It is not an exact pixel-level plume label."
+        ),
+    }
+    metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    return metadata
+
+
+def _relative_to_manifest(manifest_dir: Path, target_path: Path) -> str:
+    try:
+        return str(target_path.relative_to(manifest_dir))
+    except ValueError:
+        return str(Path(target_path).resolve().relative_to(Path(manifest_dir).resolve()))
+
+
+def _resolve_template_path(base_dir: Path, template: str, **values: Any) -> Path:
+    rendered = template.format(**values)
+    path = Path(rendered)
+    if not path.is_absolute():
+        path = base_dir / path
+    return path
+
+
+def prepare_sleipner_volume(config: dict[str, Any]) -> dict[str, Any]:
+    field_cfg = config.get("field", {})
+    inline_numbers = [int(value) for value in field_cfg.get("inline_numbers", [])]
+    vintage_map_cfg = field_cfg.get("vintage_map", {})
+    if not inline_numbers:
+        raise ValueError("field.inline_numbers must list one or more Sleipner inline numbers.")
+    if len(vintage_map_cfg) < 2:
+        raise ValueError("field.vintage_map must define at least a baseline vintage and one monitor vintage.")
+
+    vintage_map = {int(year): str(path) for year, path in vintage_map_cfg.items()}
+    ordered_years = sorted(vintage_map)
+    baseline_year = ordered_years[0]
+    monitor_years = ordered_years[1:]
+    manifest_path_value = str(field_cfg.get("output_manifest_path", "") or field_cfg.get("manifest_path", "")).strip()
+    if not manifest_path_value:
+        raise ValueError("field.output_manifest_path or field.manifest_path must be set for prepare-sleipner-volume.")
+
+    benchmark_root = str(field_cfg.get("benchmark_root", "")).strip()
+    plume_boundaries_root = str(field_cfg.get("plume_boundaries_root", "")).strip()
+    if not benchmark_root or not plume_boundaries_root:
+        raise ValueError(
+            "field.benchmark_root and field.plume_boundaries_root are required for prepare-sleipner-volume."
+        )
+
+    processing_family = str(field_cfg.get("processing_family", "")).strip() or "sleipner"
+    source_tag = str(field_cfg.get("source_tag", "mid")).strip() or "mid"
+    manifest_path = Path(manifest_path_value)
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    exports_dir = manifest_path.parent / "exports"
+    exports_dir.mkdir(parents=True, exist_ok=True)
+
+    normalization_paths = [vintage_map[year] for year in ordered_years]
+    support_template = str(field_cfg.get("output_support_volume_path_template", "")).strip()
+    support_note = str(field_cfg.get("plume_support_note", "")).strip()
+
+    pairs: list[dict[str, Any]] = []
+    export_records: list[dict[str, Any]] = []
+    for inline_number in inline_numbers:
+        baseline_section_path = exports_dir / f"sleipner_{baseline_year}_inline_{inline_number}_{processing_family}.npy"
+        mask_path = exports_dir / f"sleipner_storage_interval_mask_inline_{inline_number}_{processing_family}.npy"
+        plume_support_path = exports_dir / f"sleipner_2010_plume_support_traces_inline_{inline_number}_{processing_family}.npy"
+        if support_template:
+            support_volume_path = _resolve_template_path(
+                manifest_path.parent,
+                support_template,
+                inline=inline_number,
+                processing_family=processing_family,
+                source_tag=source_tag,
+            )
+        else:
+            support_volume_path = exports_dir / f"sleipner_2010_support_volume_inline_{inline_number}_{processing_family}.npy"
+
+        export_sleipner_inline_section(
+            segy_path=vintage_map[baseline_year],
+            inline_number=inline_number,
+            output_path=baseline_section_path,
+            normalization_reference_paths=normalization_paths,
+        )
+        export_sleipner_storage_interval_mask(
+            benchmark_root=benchmark_root,
+            segy_path=vintage_map[baseline_year],
+            inline_number=inline_number,
+            output_mask_path=mask_path,
+        )
+        export_sleipner_plume_support_traces(
+            plume_boundaries_root=plume_boundaries_root,
+            segy_path=vintage_map[baseline_year],
+            inline_number=inline_number,
+            output_support_path=plume_support_path,
+        )
+        export_sleipner_support_volume_proxy(
+            reservoir_mask_path=mask_path,
+            plume_support_path=plume_support_path,
+            output_support_volume_path=support_volume_path,
+        )
+
+        for monitor_year in monitor_years:
+            monitor_section_path = exports_dir / f"sleipner_{monitor_year}_inline_{inline_number}_{processing_family}.npy"
+            export_sleipner_inline_section(
+                segy_path=vintage_map[monitor_year],
+                inline_number=inline_number,
+                output_path=monitor_section_path,
+                normalization_reference_paths=normalization_paths,
+            )
+            pair_name = f"sleipner_{monitor_year}_inline_{inline_number}_{processing_family}_{source_tag}"
+            pairs.append(
+                {
+                    "name": pair_name,
+                    "baseline": _relative_to_manifest(manifest_path.parent, baseline_section_path),
+                    "monitor": _relative_to_manifest(manifest_path.parent, monitor_section_path),
+                    "reservoir_mask": _relative_to_manifest(manifest_path.parent, mask_path),
+                    "support_mask": _relative_to_manifest(manifest_path.parent, support_volume_path),
+                    "inline_id": int(inline_number),
+                    "vintage": int(monitor_year),
+                    "processing_family": processing_family,
+                    "source_name": source_tag,
+                    "support_note": support_note or None,
+                }
+            )
+        export_records.append(
+            {
+                "inline_id": int(inline_number),
+                "baseline": str(baseline_section_path),
+                "reservoir_mask": str(mask_path),
+                "plume_support_traces": str(plume_support_path),
+                "support_volume": str(support_volume_path),
+            }
+        )
+
+    manifest_payload = {
+        "support_note": support_note
+        or (
+            "Benchmark-derived 2010 support volumes are used as structural reference envelopes for the "
+            f"{processing_family} multi-inline public benchmark."
+        ),
+        "processing_family": processing_family,
+        "source_name": source_tag,
+        "baseline_vintage": int(baseline_year),
+        "monitor_vintages": [int(year) for year in monitor_years],
+        "inline_numbers": [int(value) for value in inline_numbers],
+        "pairs": pairs,
+    }
+    manifest_path.write_text(json.dumps(manifest_payload, indent=2), encoding="utf-8")
+    return {
+        "manifest_path": str(manifest_path),
+        "num_inlines": len(inline_numbers),
+        "num_pairs": len(pairs),
+        "baseline_vintage": int(baseline_year),
+        "monitor_vintages": [int(year) for year in monitor_years],
+        "processing_family": processing_family,
+        "source_name": source_tag,
+        "export_records": export_records,
+    }

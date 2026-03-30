@@ -1,0 +1,76 @@
+seed: 11
+output_root: runs/sleipner_p10_11inline
+artifacts_root: runs/paper_proto
+
+training:
+  device: cpu
+  mc_dropout_passes: 8
+
+field:
+  enabled: true
+  mode: manifest
+  manifest_path: examples/sleipner_manifest.p10_11inline.json
+  plume_support_note: "2010 plume-boundary support is a same-year structural benchmark for the 2010 monitor, but it remains a support envelope rather than an exact pixel-level plume label."
+  postprocess:
+    enabled: true
+    threshold_mode: quantile
+    probability_quantile: 0.92
+    min_probability_threshold: 0.5
+    uncertainty_quantile: 0.85
+    shared_across_pairs: true
+    shared_use_reservoir_region: true
+    apply_reservoir_mask: true
+    closing_iterations: 1
+    opening_iterations: 1
+    min_component_size: 400
+    keep_largest_components: 3
+  pseudo3d:
+    enabled: true
+    window_size: 3
+    method: uncertainty_weighted_mean
+    closing_iterations: 1
+    opening_iterations: 0
+    min_component_size: 900
+    keep_largest_components: 3
+  structured_support:
+    enabled: true
+    trace_window_size: 3
+    trace_vote_fraction: 0.34
+    vertical_sigma: 1.25
+    column_relative_threshold: 0.45
+    min_peak_probability: 0.5
+    vertical_margin: 2
+    closing_iterations: 0
+    opening_iterations: 0
+    min_component_size: 0
+    keep_largest_components: 0
+
+volume:
+  enabled: true
+  output_store: runs/sleipner_p10_11inline/volume.zarr
+  inline_order: [1835, 1836, 1837, 1838, 1839, 1840, 1841, 1842, 1843, 1844, 1845]
+  vintage_order: [2010]
+  chunking:
+    inline: 1
+    vintage: 1
+    sample: 256
+    trace: 128
+
+hpc:
+  launcher: local
+  num_workers: 1
+  threads_per_worker: 4
+  job_name: sleipner-p10-pseudo3d
+
+visualization:
+  enabled: true
+  mode: pyvista
+  colormap: Viridis
+  opacity: 0.18
+  output_dir: runs/sleipner_p10_11inline/results/visualization
+  animation_variable: plain_ml_structured_constrained
+  volume_variable: plain_ml_structured_constrained
+  uncertainty_variable: uncertainty
+
+report:
+  title: "CO2Shift pseudo-3D Sleipner p10 volume review"

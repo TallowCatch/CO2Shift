@@ -10,8 +10,8 @@ field:
   enabled: true
   mode: manifest
   manifest_path: examples/sleipner_manifest.real.json
-  plume_support_path: examples/exports/sleipner_2010_plume_support_traces.npy
-  plume_support_note: "2010 plume-boundary support is used as a later-time structural envelope, not as exact ground truth for the earlier 2001/2004/2006 vintages."
+  plume_support_path: ""
+  plume_support_note: "2010 plume-boundary support is used as a later-time structural envelope, not as exact ground truth for the earlier 2001/2004/2006 vintages. The multi-inline manifest carries inline-specific support-volume proxies."
   postprocess:
     enabled: true
     threshold_mode: quantile
@@ -29,11 +29,10 @@ field:
 volume:
   enabled: true
   output_store: runs/sleipner_volume/volume.zarr
-  vintages:
-    - sleipner_2001_inline_1840_mid
-    - sleipner_2004_inline_1840_mid
-    - sleipner_2006_inline_1840_mid
+  inline_order: [1838, 1840, 1842]
+  vintage_order: [2001, 2004, 2006]
   chunking:
+    inline: 1
     vintage: 1
     sample: 256
     trace: 128

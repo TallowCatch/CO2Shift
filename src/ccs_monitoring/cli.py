@@ -15,7 +15,9 @@ from .pipeline import evaluate, generate, run_all, train, validate_field_setup
 from .sleipner import (
     export_sleipner_inline_section,
     export_sleipner_plume_support_traces,
+    export_sleipner_support_volume_proxy,
     export_sleipner_storage_interval_mask,
+    prepare_sleipner_volume,
 )
 from .visualization import render_4d
 from .volume import build_volume
@@ -31,8 +33,10 @@ def _build_parser() -> argparse.ArgumentParser:
         ("run-all", "Run generation, training, and evaluation"),
         ("validate-field", "Validate a real-data field manifest or field input config"),
         ("export-sleipner-inline", "Export a normalized Sleipner inline section to .npy"),
+        ("prepare-sleipner-volume", "Prepare a multi-inline Sleipner manifest and aligned benchmark exports"),
         ("build-sleipner-mask", "Build a storage-interval mask from Sleipner benchmark surfaces"),
         ("build-sleipner-plume-support", "Build a 2010 plume-support trace mask from Sleipner benchmark polygons"),
+        ("build-sleipner-support-volume", "Build a benchmark-derived support-volume proxy from mask and plume support"),
         ("build-paper-evidence", "Build a paper-facing evidence pack from saved runs"),
         ("benchmark-jax", "Run the JAX sidecar wave-propagation sandbox"),
         ("build-volume", "Build a chunked volume store from field predictions"),
@@ -81,6 +85,8 @@ def main() -> None:
             output_path=output_path,
             normalization_reference_paths=normalization_paths,
         )
+    elif args.command == "prepare-sleipner-volume":
+        result = prepare_sleipner_volume(config)
     elif args.command == "build-sleipner-mask":
         field_cfg = config.get("field", {})
         benchmark_root = field_cfg.get("benchmark_root", "")
@@ -128,6 +134,27 @@ def main() -> None:
             segy_path=segy_path,
             inline_number=inline_number,
             output_support_path=output_support_path,
+        )
+    elif args.command == "build-sleipner-support-volume":
+        field_cfg = config.get("field", {})
+        reservoir_mask_path = field_cfg.get("output_mask_path", "")
+        plume_support_path = field_cfg.get("plume_support_path", "")
+        output_support_volume_path = field_cfg.get("output_support_volume_path", "")
+        missing = [
+            name
+            for name, value in (
+                ("field.output_mask_path", reservoir_mask_path),
+                ("field.plume_support_path", plume_support_path),
+                ("field.output_support_volume_path", output_support_volume_path),
+            )
+            if not value
+        ]
+        if missing:
+            raise ValueError(f"Missing config values for build-sleipner-support-volume: {missing}")
+        result = export_sleipner_support_volume_proxy(
+            reservoir_mask_path=reservoir_mask_path,
+            plume_support_path=plume_support_path,
+            output_support_volume_path=output_support_volume_path,
         )
     elif args.command == "build-paper-evidence":
         result = build_paper_evidence(config)

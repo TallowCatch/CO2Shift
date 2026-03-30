@@ -72,11 +72,18 @@ Manifest format:
 
 ```json
 {
-  "baseline": "sleipner_baseline.npy",
-  "reservoir_mask": "sleipner_reservoir_mask.npy",
+  "support_note": "Describe whether the support mask is an exact label, a structural envelope, or a benchmark proxy.",
   "pairs": [
-    {"name": "sleipner_2001", "monitor": "sleipner_2001.npy"},
-    {"name": "sleipner_2006", "monitor": "sleipner_2006.npy"}
+    {
+      "name": "sleipner_2001_inline_1840_p07_mid",
+      "baseline": "exports/sleipner_1994_inline_1840_p07.npy",
+      "monitor": "exports/sleipner_2001_inline_1840_p07.npy",
+      "reservoir_mask": "exports/sleipner_storage_interval_mask_inline_1840_p07.npy",
+      "support_mask": "exports/sleipner_2010_support_volume_inline_1840_p07.npy",
+      "inline_id": 1840,
+      "vintage": 2001,
+      "processing_family": "p07"
+    }
   ]
 }
 ```
@@ -92,6 +99,9 @@ PYTHONPATH=src python3 -m ccs_monitoring.cli evaluate --config configs/smoke.yam
 PYTHONPATH=src python3 -m ccs_monitoring.cli run-all --config configs/smoke.yaml
 PYTHONPATH=src python3 -m ccs_monitoring.cli validate-field --config configs/sleipner_manifest.yaml
 PYTHONPATH=.vendor:src python3 -m ccs_monitoring.cli export-sleipner-inline --config configs/sleipner_manifest.yaml
+PYTHONPATH=.vendor:src python3 -m ccs_monitoring.cli build-sleipner-mask --config configs/sleipner_manifest.yaml
+PYTHONPATH=.vendor:src python3 -m ccs_monitoring.cli build-sleipner-plume-support --config configs/sleipner_manifest.yaml
+PYTHONPATH=.vendor:src python3 -m ccs_monitoring.cli build-sleipner-support-volume --config configs/sleipner_manifest.yaml
 PYTHONPATH=src python3 -m ccs_monitoring.cli build-paper-evidence --config configs/paper_evidence.yaml
 PYTHONPATH=src python3 -m ccs_monitoring.cli build-volume --config configs/sleipner_volume.yaml
 PYTHONPATH=src python3 -m ccs_monitoring.cli render-4d --config configs/sleipner_volume.yaml
@@ -99,6 +109,7 @@ PYTHONPATH=src python3 -m ccs_monitoring.cli benchmark-jax --config configs/jax_
 ```
 
 For the real Sleipner workflow, `export-sleipner-inline` writes a `.npy` section for the configured `field.inline_number`.
+`build-sleipner-mask` aligns the benchmark reservoir interval to the SEG-Y geometry, `build-sleipner-plume-support` exports the 2010 lateral support traces, and `build-sleipner-support-volume` combines them into an explicit benchmark support-volume proxy for manifest-driven field evaluation.
 If `field.export_normalization_segy_paths` is set, the export uses one shared reference standard deviation across those vintages so later field comparisons stay on a common amplitude scale.
 
 ## Public-data alignment
@@ -135,7 +146,9 @@ Additional next-phase outputs:
 - `runs/paper_evidence/results/paper_ablation_table.csv`
 - `runs/paper_evidence/results/figures/paper_direct_2010_panel.png`
 - `runs/sleipner_volume/volume.zarr`
+- `runs/sleipner_volume/results/volume_manifest.json`
 - `runs/sleipner_volume/results/visualization/slice_browser.html`
+- `runs/sleipner_volume/results/visualization/support_volume.html`
 - `runs/sleipner_volume/results/visualization/support_evolution.gif`
 - `runs/jax_wave_lab/results/jax_summary.json`
 - `runs/jax_wave_lab/results/figures/jax_wavefield_animation.gif`

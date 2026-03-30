@@ -26,23 +26,45 @@ from .baselines import (
     score_cross_equalized_difference,
     score_difference,
     score_impedance_difference,
+    score_local_warp_difference,
+    score_nrms_difference,
 )
 from .calibration import apply_temperature, fit_temperature, monte_carlo_summary
 from .data import FieldPair, generate_synthetic_benchmark, load_field_pairs, load_split, summarize_field_pairs
 from .features import build_hybrid_channels, build_plain_channels
 from .metrics import (
+    brier_score,
     centroid_error,
     compactness_score,
     dice_score,
+    error_detection_auroc,
     expected_calibration_error,
     extent_error,
     false_positive_rate,
     iou_score,
+    negative_log_likelihood,
+    inside_support_fraction,
     outside_reservoir_fraction,
+    risk_coverage_auc,
     selective_dice,
+    support_coverage,
+    support_overlap_iou,
 )
 from .model import MonitoringUNet, dice_bce_loss
 from .runtime import ensure_runtime_environment, ensure_torch_seed
+
+
+CLASSICAL_SCORERS: dict[str, Any] = {
+    "difference": lambda baseline, monitor, reservoir_mask: score_difference(baseline, monitor),
+    "nrms_difference": lambda baseline, monitor, reservoir_mask: score_nrms_difference(baseline, monitor),
+    "impedance": lambda baseline, monitor, reservoir_mask: score_impedance_difference(baseline, monitor),
+    "cross_equalized_difference": (
+        lambda baseline, monitor, reservoir_mask: score_cross_equalized_difference(baseline, monitor, reservoir_mask)
+    ),
+    "local_warp_difference": (
+        lambda baseline, monitor, reservoir_mask: score_local_warp_difference(baseline, monitor, reservoir_mask)
+    ),
+}
 
 
 @dataclass(slots=True)
@@ -340,6 +362,15 @@ def _evaluate_predictions(
         "centroid_error": centroid_error(probabilities, targets),
         "extent_error": extent_error(probabilities, targets),
         "ece": expected_calibration_error(probabilities, targets),
+        "brier": brier_score(probabilities, targets),
+        "nll": negative_log_likelihood(probabilities, targets),
+        "error_detection_auroc": error_detection_auroc(probabilities, targets, uncertainty),
+        "risk_coverage_auc": risk_coverage_auc(
+            probabilities,
+            targets,
+            uncertainty,
+            evaluation_cfg.get("coverage_quantiles", [0.5, 0.7, 0.8, 0.9, 0.95]),
+        ),
     }
     for quantile in evaluation_cfg["abstain_quantiles"]:
         metrics[f"selective_dice_q{quantile:.1f}"] = selective_dice(probabilities, targets, uncertainty, quantile)
@@ -405,6 +436,64 @@ def _trace_support_metrics(
         "trace_iou_with_2010_support": _binary_iou(predicted_trace_mask, support_trace_mask),
         "trace_support_coverage_vs_2010": float(inside_count / max(support_count, 1)),
     }
+
+
+def _support_volume_metrics(
+    binary_map: np.ndarray,
+    support_mask: np.ndarray | None,
+) -> dict[str, Any]:
+    if support_mask is None:
+        return {}
+    return {
+        "support_volume_iou_2010": support_overlap_iou(binary_map, support_mask),
+        "support_volume_coverage_vs_2010": support_coverage(binary_map, support_mask),
+        "predicted_fraction_inside_support_volume": inside_support_fraction(binary_map, support_mask),
+        "predicted_fraction_outside_support_volume": 1.0 - inside_support_fraction(binary_map, support_mask),
+    }
+
+
+def _resolve_support_volume(
+    reservoir_mask: np.ndarray | None,
+    support_traces: np.ndarray | None,
+    pair_support_mask: np.ndarray | None = None,
+) -> np.ndarray | None:
+    if pair_support_mask is not None:
+        return pair_support_mask.astype(np.float32)
+    if reservoir_mask is None or support_traces is None:
+        return None
+    return ((reservoir_mask > 0.5) & support_traces[None, :].astype(bool)).astype(np.float32)
+
+
+def _build_split_scenario_breakdown(
+    split_arrays: dict[str, np.ndarray],
+    method_predictions: dict[str, np.ndarray],
+    method_uncertainty: dict[str, np.ndarray],
+    evaluation_cfg: dict[str, Any],
+) -> dict[str, Any]:
+    scenario_values = split_arrays.get("scenario_type")
+    if scenario_values is None:
+        return {}
+
+    scenario_labels = [str(value) for value in scenario_values]
+    breakdown: dict[str, Any] = {}
+    for scenario_name in sorted(set(scenario_labels)):
+        indices = [index for index, value in enumerate(scenario_labels) if value == scenario_name]
+        targets = split_arrays["change_mask"][indices]
+        breakdown[scenario_name] = {
+            method_name: _evaluate_predictions(
+                predictions[indices],
+                targets,
+                uncertainty[indices],
+                evaluation_cfg,
+            )
+            for method_name, predictions in method_predictions.items()
+            for uncertainty in [method_uncertainty[method_name]]
+        }
+        breakdown[scenario_name]["num_samples"] = len(indices)
+        breakdown[scenario_name]["containment_positive_fraction"] = float(
+            np.mean(split_arrays.get("containment_label", np.ones(len(scenario_labels), dtype=np.int8))[indices] > 0)
+        )
+    return breakdown
 
 
 def _collect_field_region_values(
@@ -583,6 +672,35 @@ def _flatten_results(prefix: str, payload: dict[str, Any], rows: list[dict[str, 
             rows.append({"metric": f"{prefix}{key}".rstrip("."), "value": value})
 
 
+def _flatten_volume_summary_rows(volume_summary: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    by_vintage = volume_summary.get("by_vintage", {})
+    for vintage, methods in by_vintage.items():
+        for method_name, metrics in methods.items():
+            for metric_name, value in metrics.items():
+                rows.append(
+                    {
+                        "scope": "by_vintage",
+                        "vintage": vintage,
+                        "method": method_name,
+                        "metric": metric_name,
+                        "value": value,
+                    }
+                )
+    for method_name, metrics in volume_summary.get("overall", {}).items():
+        for metric_name, value in metrics.items():
+            rows.append(
+                {
+                    "scope": "overall",
+                    "vintage": "all",
+                    "method": method_name,
+                    "metric": metric_name,
+                    "value": value,
+                }
+            )
+    return rows
+
+
 def _save_prediction_figure(
     baseline: np.ndarray,
     monitor: np.ndarray,
@@ -640,6 +758,22 @@ def _prepare_dirs(output_root: Path) -> dict[str, Path]:
     for directory in dirs.values():
         directory.mkdir(parents=True, exist_ok=True)
     return dirs
+
+
+def _build_run_provenance(config: dict[str, Any], artifacts_root: Path) -> dict[str, Any]:
+    field_cfg = config.get("field", {})
+    return {
+        "config_path": config.get("config_path", ""),
+        "output_root": str(Path(config["output_root"]).resolve()),
+        "artifacts_root": str(artifacts_root.resolve()),
+        "field_manifest_path": str(field_cfg.get("manifest_path", "")),
+        "field_mode": str(field_cfg.get("mode", "")),
+        "benchmark_root": str(field_cfg.get("benchmark_root", "")),
+        "plume_boundaries_root": str(field_cfg.get("plume_boundaries_root", "")),
+        "segy_path": str(field_cfg.get("segy_path", "")),
+        "plume_support_path": str(field_cfg.get("plume_support_path", "")),
+        "plume_support_volume_path": str(field_cfg.get("plume_support_volume_path", "")),
+    }
 
 
 def _save_model_artifact(path: Path, artifact: dict[str, Any]) -> None:
@@ -729,60 +863,48 @@ def evaluate(config: dict[str, Any]) -> dict[str, Any]:
     dirs = _prepare_dirs(output_root)
     bundle = _load_bundle(artifacts_root)
 
-    val_diff_scores = np.stack(
-        [score_difference(b, m) for b, m in zip(bundle.val["baseline"], bundle.val["monitor"])],
-        axis=0,
-    )
-    val_impedance_scores = np.stack(
-        [score_impedance_difference(b, m) for b, m in zip(bundle.val["baseline"], bundle.val["monitor"])],
-        axis=0,
-    )
-    val_cross_equalized_scores = np.stack(
-        [
-            score_cross_equalized_difference(b, m, reservoir_mask)
-            for b, m, reservoir_mask in zip(
-                bundle.val["baseline"],
-                bundle.val["monitor"],
-                bundle.val["reservoir_mask"],
-            )
-        ],
-        axis=0,
-    )
-    diff_threshold = fit_best_threshold(val_diff_scores, bundle.val["change_mask"])
-    impedance_threshold = fit_best_threshold(val_impedance_scores, bundle.val["change_mask"])
-    cross_equalized_threshold = fit_best_threshold(val_cross_equalized_scores, bundle.val["change_mask"])
+    classical_thresholds: dict[str, float] = {}
+    for method_name, scorer in CLASSICAL_SCORERS.items():
+        val_scores = np.stack(
+            [
+                scorer(baseline, monitor, reservoir_mask)
+                for baseline, monitor, reservoir_mask in zip(
+                    bundle.val["baseline"],
+                    bundle.val["monitor"],
+                    bundle.val["reservoir_mask"],
+                )
+            ],
+            axis=0,
+        )
+        classical_thresholds[method_name] = fit_best_threshold(val_scores, bundle.val["change_mask"])
 
     plain_artifact = _load_model_artifact(artifacts_root / "models" / "plain.pt", in_channels=2)
     hybrid_artifact = _load_model_artifact(artifacts_root / "models" / "hybrid.pt", in_channels=6)
     device = torch.device(config["training"].get("device", "cpu"))
 
     results: dict[str, Any] = {
-        "classical_thresholds": {
-            "difference": diff_threshold,
-            "impedance": impedance_threshold,
-            "cross_equalized_difference": cross_equalized_threshold,
-        }
+        "classical_thresholds": classical_thresholds,
+        "provenance": _build_run_provenance(config, artifacts_root),
     }
 
     for split_name in ("test", "ood"):
         split = getattr(bundle, split_name)
         targets = split["change_mask"]
 
-        diff_scores = np.stack([score_difference(b, m) for b, m in zip(split["baseline"], split["monitor"])], axis=0)
-        impedance_scores = np.stack(
-            [score_impedance_difference(b, m) for b, m in zip(split["baseline"], split["monitor"])],
-            axis=0,
-        )
-        cross_equalized_scores = np.stack(
-            [
-                score_cross_equalized_difference(b, m, reservoir_mask)
-                for b, m, reservoir_mask in zip(split["baseline"], split["monitor"], split["reservoir_mask"])
-            ],
-            axis=0,
-        )
-        diff_predictions = apply_threshold(diff_scores, diff_threshold)
-        impedance_predictions = apply_threshold(impedance_scores, impedance_threshold)
-        cross_equalized_predictions = apply_threshold(cross_equalized_scores, cross_equalized_threshold)
+        classical_predictions: dict[str, np.ndarray] = {}
+        for method_name, scorer in CLASSICAL_SCORERS.items():
+            scores = np.stack(
+                [
+                    scorer(baseline, monitor, reservoir_mask)
+                    for baseline, monitor, reservoir_mask in zip(
+                        split["baseline"],
+                        split["monitor"],
+                        split["reservoir_mask"],
+                    )
+                ],
+                axis=0,
+            )
+            classical_predictions[method_name] = apply_threshold(scores, classical_thresholds[method_name])
 
         plain_inputs, _ = _build_inputs(split, hybrid=False)
         hybrid_inputs, _ = _build_inputs(split, hybrid=True)
@@ -805,19 +927,6 @@ def evaluate(config: dict[str, Any]) -> dict[str, Any]:
         )
 
         split_metrics = {
-            "difference": _evaluate_predictions(diff_predictions, targets, np.zeros_like(diff_predictions), config["evaluation"]),
-            "impedance": _evaluate_predictions(
-                impedance_predictions,
-                targets,
-                np.zeros_like(impedance_predictions),
-                config["evaluation"],
-            ),
-            "cross_equalized_difference": _evaluate_predictions(
-                cross_equalized_predictions,
-                targets,
-                np.zeros_like(cross_equalized_predictions),
-                config["evaluation"],
-            ),
             "plain_ml": _evaluate_predictions(plain_probs, targets, plain_uncertainty, config["evaluation"]),
             "hybrid_ml": _evaluate_predictions(hybrid_probs, targets, hybrid_uncertainty, config["evaluation"]),
             "runtime_seconds": {
@@ -825,6 +934,28 @@ def evaluate(config: dict[str, Any]) -> dict[str, Any]:
                 "hybrid_ml": float(hybrid_runtime),
             },
         }
+        for method_name, prediction in classical_predictions.items():
+            split_metrics[method_name] = _evaluate_predictions(
+                prediction,
+                targets,
+                np.zeros_like(prediction),
+                config["evaluation"],
+            )
+        if config["evaluation"].get("scenario_breakdown", True):
+            split_metrics["scenario_breakdown"] = _build_split_scenario_breakdown(
+                split,
+                {
+                    **classical_predictions,
+                    "plain_ml": plain_probs,
+                    "hybrid_ml": hybrid_probs,
+                },
+                {
+                    **{name: np.zeros_like(prediction) for name, prediction in classical_predictions.items()},
+                    "plain_ml": plain_uncertainty,
+                    "hybrid_ml": hybrid_uncertainty,
+                },
+                config["evaluation"],
+            )
         results[split_name] = split_metrics
 
         if config["evaluation"]["save_figures"]:
@@ -840,152 +971,62 @@ def evaluate(config: dict[str, Any]) -> dict[str, Any]:
 
     field_pairs = load_field_pairs(config, split_arrays=bundle.ood)
     if field_pairs:
-        plume_support_path = config.get("field", {}).get("plume_support_path", "")
-        plume_support_traces = None
-        if plume_support_path:
-            support_array = np.load(plume_support_path).astype(np.float32)
-            if support_array.ndim != 1:
-                raise ValueError(
-                    f"field.plume_support_path must point to a 1D trace-support array; got shape {support_array.shape}."
-                )
-            if support_array.shape[0] != field_pairs[0].baseline.shape[1]:
-                raise ValueError(
-                    "field.plume_support_path length does not match the number of traces in the field sections: "
-                    f"{support_array.shape[0]} vs {field_pairs[0].baseline.shape[1]}."
-                )
-            plume_support_traces = support_array > 0.5
+        from .field_tools import collect_field_prediction_bundle, summarize_field_prediction_bundle
 
-        field_outputs: list[dict[str, Any]] = []
-        for field_pair in field_pairs:
-            field_plain_inputs = build_plain_channels(field_pair.baseline, field_pair.monitor)[None, ...]
-            field_hybrid_inputs = build_hybrid_channels(field_pair.baseline, field_pair.monitor)[None, ...]
-            plain_probs, plain_uncertainty, _ = predict_probabilities(
-                plain_artifact["model"],
-                field_plain_inputs,
-                device,
-                temperature=plain_artifact["temperature"],
-                mc_passes=1,
-                seed=config["seed"] + 300,
-            )
-            hybrid_probs, hybrid_uncertainty, _ = predict_probabilities(
-                hybrid_artifact["model"],
-                field_hybrid_inputs,
-                device,
-                temperature=hybrid_artifact["temperature"],
-                mc_passes=config["training"]["mc_dropout_passes"],
-                seed=config["seed"] + 400,
-            )
-            field_outputs.append(
-                {
-                    "pair": field_pair,
-                    "plain_probs": plain_probs[0],
-                    "plain_uncertainty": plain_uncertainty[0],
-                    "hybrid_probs": hybrid_probs[0],
-                    "hybrid_uncertainty": hybrid_uncertainty[0],
-                }
-            )
+        field_bundle = collect_field_prediction_bundle(config)
+        results["field"] = summarize_field_prediction_bundle(config, field_bundle)
+        volume_rows = _flatten_volume_summary_rows(results["field"].get("volume_summary", {}))
+        if volume_rows:
+            with (dirs["results"] / "volume_metrics.csv").open("w", encoding="utf-8") as handle:
+                handle.write("scope,vintage,method,metric,value\n")
+                for row in volume_rows:
+                    handle.write(
+                        f"{row['scope']},{row['vintage']},{row['method']},{row['metric']},{row['value']}\n"
+                    )
 
-        shared_context = _compute_shared_field_postprocess_context(
-            [entry["hybrid_probs"] for entry in field_outputs],
-            [entry["hybrid_uncertainty"] for entry in field_outputs],
-            [entry["pair"].reservoir_mask for entry in field_outputs],
-            config.get("field", {}),
-        )
-
-        pair_results: dict[str, Any] = {}
-        raw_compactness_values: list[float] = []
-        raw_outside_values: list[float] = []
-        raw_uncertainty_values: list[float] = []
-        constrained_compactness_values: list[float] = []
-        constrained_outside_values: list[float] = []
-        constrained_uncertainty_values: list[float] = []
-        constrained_binaries: dict[str, np.ndarray] = {}
-        constrained_fractions: dict[str, float] = {}
-        constrained_trace_fractions: dict[str, float] = {}
-        constrained_support_iou: dict[str, float] = {}
-
-        for field_output in field_outputs:
-            field_pair = field_output["pair"]
-            plain_probs = field_output["plain_probs"]
-            plain_uncertainty = field_output["plain_uncertainty"]
-            hybrid_probs = field_output["hybrid_probs"]
-            hybrid_uncertainty = field_output["hybrid_uncertainty"]
-            cross_equalized_scores = score_cross_equalized_difference(
-                field_pair.baseline,
-                field_pair.monitor,
-                field_pair.reservoir_mask,
-            )
-            cross_equalized_binary = apply_threshold(cross_equalized_scores[None, ...], cross_equalized_threshold)[0] > 0.5
-            cross_equalized_structured, cross_equalized_cleanup = _cleanup_field_binary(
-                cross_equalized_binary,
-                field_pair.reservoir_mask,
-                config.get("field", {}),
-            )
-            hybrid_metrics = _evaluate_field_prediction(hybrid_probs, hybrid_uncertainty, field_pair.reservoir_mask)
-            constrained_binary, constraint_metadata = _postprocess_field_prediction(
-                hybrid_probs,
-                hybrid_uncertainty,
-                field_pair.reservoir_mask,
-                config.get("field", {}),
-                shared_context=shared_context,
-            )
-            constrained_metrics = _summarize_field_binary(
-                constrained_binary,
-                hybrid_uncertainty,
-                field_pair.reservoir_mask,
-            )
-            support_metrics = _trace_support_metrics(constrained_binary, plume_support_traces)
-            pair_results[field_pair.name] = {
-                "cross_equalized_difference": {
-                    **_summarize_field_binary(
-                        cross_equalized_structured,
-                        np.zeros_like(cross_equalized_scores, dtype=np.float32),
-                        field_pair.reservoir_mask,
-                    ),
-                    **_trace_support_metrics(cross_equalized_structured, plume_support_traces),
-                    "constraint_metadata": {
-                        "enabled": True,
-                        "threshold_mode": "synthetic_validation_threshold",
-                        "probability_threshold": float(cross_equalized_threshold),
-                        "uncertainty_threshold": None,
-                        "threshold_source": "synthetic_validation_threshold",
-                        "shared_across_pairs": True,
-                        **cross_equalized_cleanup,
-                    },
-                },
-                "plain_ml": _evaluate_field_prediction(plain_probs, plain_uncertainty, field_pair.reservoir_mask),
-                "hybrid_ml": hybrid_metrics,
-                "hybrid_ml_constrained": {
-                    **constrained_metrics,
-                    **support_metrics,
-                    "constraint_metadata": constraint_metadata,
-                },
-            }
-            if not np.isnan(hybrid_metrics["compactness"]):
-                raw_compactness_values.append(hybrid_metrics["compactness"])
-            if not np.isnan(hybrid_metrics["outside_reservoir_fraction"]):
-                raw_outside_values.append(hybrid_metrics["outside_reservoir_fraction"])
-            raw_uncertainty_values.append(hybrid_metrics["mean_uncertainty"])
-
-            if not np.isnan(constrained_metrics["compactness"]):
-                constrained_compactness_values.append(constrained_metrics["compactness"])
-            if not np.isnan(constrained_metrics["outside_reservoir_fraction"]):
-                constrained_outside_values.append(constrained_metrics["outside_reservoir_fraction"])
-            constrained_uncertainty_values.append(constrained_metrics["mean_uncertainty"])
-            constrained_binaries[field_pair.name] = constrained_binary.astype(bool)
-            constrained_fractions[field_pair.name] = float(constrained_metrics["predicted_fraction"])
-            constrained_trace_fractions[field_pair.name] = float(support_metrics.get("predicted_trace_fraction", float("nan")))
-            constrained_support_iou[field_pair.name] = float(support_metrics.get("trace_iou_with_2010_support", float("nan")))
-
-            if config["evaluation"]["save_figures"]:
+        if config["evaluation"]["save_figures"]:
+            for field_output in field_bundle.outputs:
+                field_pair = field_output["pair"]
+                hybrid_probs = field_output["hybrid_probs"]
+                hybrid_uncertainty = field_output["hybrid_uncertainty"]
+                plain_probs = field_output["plain_probs"]
+                plain_uncertainty = field_output["plain_uncertainty"]
+                for method_name, scores in field_output["classical_scores"].items():
+                    _save_prediction_figure(
+                        field_pair.baseline,
+                        field_pair.monitor,
+                        field_output["classical_binaries"][method_name].astype(np.float32),
+                        np.zeros_like(scores, dtype=np.float32),
+                        None,
+                        dirs["figures"] / f"field_{field_pair.name}_{method_name}.png",
+                        title=f"Field {method_name.replace('_', ' ')}: {field_pair.name}",
+                    )
                 _save_prediction_figure(
                     field_pair.baseline,
                     field_pair.monitor,
-                    cross_equalized_structured.astype(np.float32),
-                    np.zeros_like(cross_equalized_scores, dtype=np.float32),
+                    field_output["best_classical_constrained_binary"].astype(np.float32),
+                    field_output["best_classical_constrained_uncertainty"],
                     None,
-                    dirs["figures"] / f"field_{field_pair.name}_cross_equalized_difference.png",
-                    title=f"Field cross-equalized difference: {field_pair.name}",
+                    dirs["figures"] / f"field_{field_pair.name}_best_classical_constrained.png",
+                    title=f"Field best constrained classical: {field_pair.name}",
+                )
+                _save_prediction_figure(
+                    field_pair.baseline,
+                    field_pair.monitor,
+                    field_output["plain_ml_constrained_binary"].astype(np.float32),
+                    plain_uncertainty,
+                    None,
+                    dirs["figures"] / f"field_{field_pair.name}_plain_ml_constrained.png",
+                    title=f"Field-style constrained plain ML prediction: {field_pair.name}",
+                )
+                _save_prediction_figure(
+                    field_pair.baseline,
+                    field_pair.monitor,
+                    field_output["plain_ml_structured_constrained_binary"].astype(np.float32),
+                    field_output["plain_ml_structured_constrained_uncertainty"],
+                    None,
+                    dirs["figures"] / f"field_{field_pair.name}_plain_ml_structured_constrained.png",
+                    title=f"Field-style structured plain ML prediction: {field_pair.name}",
                 )
                 _save_prediction_figure(
                     field_pair.baseline,
@@ -999,80 +1040,30 @@ def evaluate(config: dict[str, Any]) -> dict[str, Any]:
                 _save_prediction_figure(
                     field_pair.baseline,
                     field_pair.monitor,
-                    constrained_binary.astype(np.float32),
+                    field_output["hybrid_ml_constrained_binary"].astype(np.float32),
                     hybrid_uncertainty,
                     None,
                     dirs["figures"] / f"field_{field_pair.name}_hybrid_constrained.png",
                     title=f"Field-style constrained hybrid prediction: {field_pair.name}",
                 )
-
-        results["field"] = {
-            "pairs": pair_results,
-            "hybrid_average": {
-                "compactness": float(np.mean(raw_compactness_values)) if raw_compactness_values else float("nan"),
-                "outside_reservoir_fraction": float(np.mean(raw_outside_values)) if raw_outside_values else float("nan"),
-                "mean_uncertainty": float(np.mean(raw_uncertainty_values)) if raw_uncertainty_values else float("nan"),
-            },
-            "hybrid_constrained_average": {
-                "compactness": (
-                    float(np.mean(constrained_compactness_values)) if constrained_compactness_values else float("nan")
-                ),
-                "outside_reservoir_fraction": (
-                    float(np.mean(constrained_outside_values)) if constrained_outside_values else float("nan")
-                ),
-                "mean_uncertainty": (
-                    float(np.mean(constrained_uncertainty_values)) if constrained_uncertainty_values else float("nan")
-                ),
-            },
-        }
-        if len(constrained_binaries) >= 2:
-            ordered_names = sorted(constrained_binaries)
-            consecutive_pairs = list(zip(ordered_names[:-1], ordered_names[1:]))
-            area_deltas = {
-                f"{earlier}->{later}": float(constrained_fractions[later] - constrained_fractions[earlier])
-                for earlier, later in consecutive_pairs
-            }
-            trace_fraction_deltas = {
-                f"{earlier}->{later}": float(constrained_trace_fractions[later] - constrained_trace_fractions[earlier])
-                for earlier, later in consecutive_pairs
-                if not np.isnan(constrained_trace_fractions[earlier]) and not np.isnan(constrained_trace_fractions[later])
-            }
-            pairwise_iou = {
-                f"{earlier}<->{later}": _binary_iou(constrained_binaries[earlier], constrained_binaries[later])
-                for earlier, later in consecutive_pairs
-            }
-            support_iou_progression = {
-                name: float(value) for name, value in constrained_support_iou.items() if not np.isnan(value)
-            }
-            results["field"]["temporal_consistency"] = {
-                "ordered_pairs": ordered_names,
-                "constrained_area_deltas": area_deltas,
-                "constrained_trace_fraction_deltas": trace_fraction_deltas,
-                "constrained_pairwise_iou": pairwise_iou,
-                "constrained_area_non_decreasing": all(delta >= 0.0 for delta in area_deltas.values()),
-                "constrained_trace_fraction_non_decreasing": (
-                    all(delta >= 0.0 for delta in trace_fraction_deltas.values()) if trace_fraction_deltas else False
-                ),
-                "constrained_trace_fraction_by_pair": constrained_trace_fractions,
-                "constrained_support_iou_by_pair": support_iou_progression,
-                "constrained_support_iou_non_decreasing": (
-                    all(
-                        support_iou_progression[later] >= support_iou_progression[earlier]
-                        for earlier, later in consecutive_pairs
-                        if earlier in support_iou_progression and later in support_iou_progression
-                    )
-                    if support_iou_progression
-                    else False
-                ),
-            }
-        if plume_support_traces is not None:
-            support_note = str(config.get("field", {}).get("plume_support_note", "")).strip()
-            if not support_note:
-                support_note = (
-                    "2010 plume-boundary support is used as a later-time structural envelope, not as exact ground "
-                    "truth for earlier vintages."
+                _save_prediction_figure(
+                    field_pair.baseline,
+                    field_pair.monitor,
+                    field_output["hybrid_ml_structured_constrained_binary"].astype(np.float32),
+                    field_output["hybrid_ml_structured_constrained_uncertainty"],
+                    None,
+                    dirs["figures"] / f"field_{field_pair.name}_hybrid_ml_structured_constrained.png",
+                    title=f"Field-style structured hybrid prediction: {field_pair.name}",
                 )
-            results["field"]["support_note"] = support_note
+                _save_prediction_figure(
+                    field_pair.baseline,
+                    field_pair.monitor,
+                    field_output["hybrid_ml_pseudo3d_constrained_binary"].astype(np.float32),
+                    field_output["hybrid_ml_pseudo3d_constrained_uncertainty"],
+                    None,
+                    dirs["figures"] / f"field_{field_pair.name}_hybrid_pseudo3d_constrained.png",
+                    title=f"Field-style pseudo-3D constrained hybrid prediction: {field_pair.name}",
+                )
 
     summary_sections = {
         "Overview": {

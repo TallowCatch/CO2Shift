@@ -67,6 +67,17 @@ def expected_calibration_error(probabilities: np.ndarray, targets: np.ndarray, b
     return float(ece)
 
 
+def brier_score(probabilities: np.ndarray, targets: np.ndarray) -> float:
+    return float(np.mean((probabilities.astype(np.float64) - targets.astype(np.float64)) ** 2))
+
+
+def negative_log_likelihood(probabilities: np.ndarray, targets: np.ndarray) -> float:
+    probs = np.clip(probabilities.astype(np.float64), 1e-6, 1.0 - 1e-6)
+    truth = (targets > 0.5).astype(np.float64)
+    nll = -(truth * np.log(probs) + (1.0 - truth) * np.log(1.0 - probs))
+    return float(np.mean(nll))
+
+
 def coverage_at_quantile(uncertainty: np.ndarray, quantile: float) -> np.ndarray:
     threshold = float(np.quantile(uncertainty, quantile))
     return uncertainty <= threshold
@@ -91,6 +102,61 @@ def selective_dice(
     return float((2.0 * intersection + 1e-6) / (denom + 1e-6))
 
 
+def risk_coverage_auc(
+    probabilities: np.ndarray,
+    targets: np.ndarray,
+    uncertainty: np.ndarray,
+    coverage_quantiles: list[float],
+    threshold: float = 0.5,
+) -> float:
+    if np.allclose(uncertainty, uncertainty.reshape(-1)[0]):
+        return float("nan")
+
+    coverages: list[float] = []
+    risks: list[float] = []
+    for quantile in coverage_quantiles:
+        keep = coverage_at_quantile(uncertainty, quantile)
+        coverage = float(np.mean(keep))
+        pred = probabilities[keep] >= threshold
+        truth = targets[keep] > 0.5
+        if pred.size == 0:
+            continue
+        risk = 1.0 - float(np.mean(pred == truth))
+        coverages.append(coverage)
+        risks.append(risk)
+    if len(coverages) < 2:
+        return float("nan")
+    order = np.argsort(coverages)
+    coverage_arr = np.asarray(coverages, dtype=np.float64)[order]
+    risk_arr = np.asarray(risks, dtype=np.float64)[order]
+    return float(np.trapezoid(risk_arr, coverage_arr))
+
+
+def error_detection_auroc(
+    probabilities: np.ndarray,
+    targets: np.ndarray,
+    uncertainty: np.ndarray,
+    threshold: float = 0.5,
+) -> float:
+    truth = targets > 0.5
+    prediction = probabilities >= threshold
+    errors = (prediction != truth).reshape(-1).astype(np.int8)
+    scores = uncertainty.reshape(-1).astype(np.float64)
+    if errors.min() == errors.max():
+        return float("nan")
+    order = np.argsort(scores)
+    ranks = np.empty_like(order, dtype=np.float64)
+    ranks[order] = np.arange(len(scores), dtype=np.float64) + 1.0
+    positives = errors == 1
+    num_pos = int(np.sum(positives))
+    num_neg = int(len(errors) - num_pos)
+    if num_pos == 0 or num_neg == 0:
+        return float("nan")
+    rank_sum_pos = float(np.sum(ranks[positives]))
+    auc = (rank_sum_pos - num_pos * (num_pos + 1) / 2.0) / (num_pos * num_neg)
+    return float(auc)
+
+
 def compactness_score(binary_map: np.ndarray) -> float:
     binary_map = binary_map.astype(bool)
     area = float(np.sum(binary_map))
@@ -108,3 +174,32 @@ def outside_reservoir_fraction(binary_map: np.ndarray, reservoir_mask: np.ndarra
     outside = binary_map & ~(reservoir_mask > 0.5)
     predicted = np.sum(binary_map)
     return float(np.sum(outside) / max(predicted, 1))
+
+
+def inside_support_fraction(binary_map: np.ndarray, support_mask: np.ndarray | None) -> float:
+    if support_mask is None:
+        return float("nan")
+    binary_map = binary_map.astype(bool)
+    predicted = np.sum(binary_map)
+    inside = binary_map & (support_mask > 0.5)
+    return float(np.sum(inside) / max(predicted, 1))
+
+
+def support_overlap_iou(binary_map: np.ndarray, support_mask: np.ndarray | None) -> float:
+    if support_mask is None:
+        return float("nan")
+    binary_map = binary_map.astype(bool)
+    support = support_mask > 0.5
+    union = np.sum(binary_map | support)
+    if union == 0:
+        return float("nan")
+    return float(np.sum(binary_map & support) / union)
+
+
+def support_coverage(binary_map: np.ndarray, support_mask: np.ndarray | None) -> float:
+    if support_mask is None:
+        return float("nan")
+    binary_map = binary_map.astype(bool)
+    support = support_mask > 0.5
+    support_count = np.sum(support)
+    return float(np.sum(binary_map & support) / max(support_count, 1))
