@@ -12,6 +12,7 @@ from .config import load_config
 from .jax_sidecar import benchmark_jax_wave_lab
 from .paper import build_paper_evidence
 from .pipeline import evaluate, generate, run_all, train, validate_field_setup
+from .seed_sweep import run_seed_sweep
 from .sleipner import (
     export_sleipner_inline_section,
     export_sleipner_plume_support_traces,
@@ -38,6 +39,7 @@ def _build_parser() -> argparse.ArgumentParser:
         ("build-sleipner-plume-support", "Build a 2010 plume-support trace mask from Sleipner benchmark polygons"),
         ("build-sleipner-support-volume", "Build a benchmark-derived support-volume proxy from mask and plume support"),
         ("build-paper-evidence", "Build a paper-facing evidence pack from saved runs"),
+        ("seed-sweep", "Run a multi-seed synthetic stability sweep"),
         ("benchmark-jax", "Run the JAX sidecar wave-propagation sandbox"),
         ("build-volume", "Build a chunked volume store from field predictions"),
         ("render-4d", "Render HTML and GIF 4D-style outputs from a chunked volume store"),
@@ -158,6 +160,8 @@ def main() -> None:
         )
     elif args.command == "build-paper-evidence":
         result = build_paper_evidence(config)
+    elif args.command == "seed-sweep":
+        result = run_seed_sweep(config)
     elif args.command == "benchmark-jax":
         result = benchmark_jax_wave_lab(config)
     elif args.command == "build-volume":

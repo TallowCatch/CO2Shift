@@ -133,6 +133,7 @@ def _build_field_rows(volume_summary: dict[str, Any]) -> list[dict[str, Any]]:
         "best_classical_constrained",
         "plain_ml_constrained",
         "plain_ml_structured_constrained",
+        "plain_ml_layered_structured_constrained",
         "hybrid_ml_constrained",
         "hybrid_ml_structured_constrained",
     ]
@@ -180,6 +181,7 @@ def _build_direct_rows(volume_summary: dict[str, Any]) -> list[dict[str, Any]]:
         "best_classical_constrained",
         "plain_ml_constrained",
         "plain_ml_structured_constrained",
+        "plain_ml_layered_structured_constrained",
         "hybrid_ml_constrained",
         "hybrid_ml_structured_constrained",
     ]:
@@ -209,6 +211,7 @@ def _build_ablation_rows(field_volume_summary: dict[str, Any], direct_volume_sum
             "best_classical_constrained",
             "plain_ml_constrained",
             "plain_ml_structured_constrained",
+            "plain_ml_layered_structured_constrained",
             "hybrid_ml_constrained",
             "hybrid_ml_structured_constrained",
         ]:
@@ -249,6 +252,10 @@ def _build_direct_panel(config: dict[str, Any], volume_summary: dict[str, Any], 
         dataset["plain_ml_structured_constrained"].isel(inline=inline_index, vintage=-1).values,
         dtype=np.float32,
     )
+    layered_structured_image = np.asarray(
+        dataset["plain_ml_layered_structured_constrained"].isel(inline=inline_index, vintage=-1).values,
+        dtype=np.float32,
+    )
     titles = [
         f"A. Best classical ({volume_summary['overall']['best_classical_constrained']['support_volume_iou_2010']:.3f})",
         f"B. Plain ML ({volume_summary['overall']['plain_ml_constrained']['support_volume_iou_2010']:.3f})",
@@ -256,10 +263,14 @@ def _build_direct_panel(config: dict[str, Any], volume_summary: dict[str, Any], 
             "C. Plain ML + structured support "
             f"({volume_summary['overall']['plain_ml_structured_constrained']['support_volume_iou_2010']:.3f})"
         ),
-        "D. Benchmark support",
+        (
+            "D. Plain ML + layered structured support "
+            f"({volume_summary['overall']['plain_ml_layered_structured_constrained']['support_volume_iou_2010']:.3f})"
+        ),
+        "E. Benchmark support",
     ]
-    images = [classical_image, plain_image, structured_image, benchmark_image]
-    fig, axes = plt.subplots(1, 4, figsize=(20, 5))
+    images = [classical_image, plain_image, structured_image, layered_structured_image, benchmark_image]
+    fig, axes = plt.subplots(1, 5, figsize=(24, 5))
     for axis, image, title in zip(axes, images, titles):
         axis.imshow(image, cmap="magma", aspect="auto", vmin=0.0, vmax=1.0)
         axis.set_title(title)
@@ -278,34 +289,41 @@ def _build_methods_results_block(
     classical_method = _synthetic_classical_method(synthetic_metrics)
     p07_plain = field_volume_summary["overall"]["plain_ml_constrained"]
     p07_structured = field_volume_summary["overall"]["plain_ml_structured_constrained"]
+    p07_layered = field_volume_summary["overall"]["plain_ml_layered_structured_constrained"]
     p10_plain = direct_volume_summary["overall"]["plain_ml_constrained"]
     p10_structured = direct_volume_summary["overall"]["plain_ml_structured_constrained"]
+    p10_layered = direct_volume_summary["overall"]["plain_ml_layered_structured_constrained"]
     p10_classical = direct_volume_summary["overall"]["best_classical_constrained"]
     p10_hybrid = direct_volume_summary["overall"]["hybrid_ml_constrained"]
     return (
         f"Claim: {claim}\n\n"
         "Methods: We keep the 2D PyTorch models and classical baselines, but the main field-facing result now "
-        "centers on plain ML plus structured support reconstruction rather than the hybrid model. Field outputs "
-        "are benchmark-constrained using the public Sleipner storage interval, and the 3D evidence is reported "
-        "on 11-inline pseudo-3D p07 and p10 benchmarks.\n\n"
+        "centers on plain ML plus structured support reconstruction rather than the hybrid model. We evaluate both "
+        "the original structured reconstruction and a new layered structured variant that uses benchmark-informed "
+        "reservoir bands as a deterministic pseudo-3D refinement stage. Field outputs are benchmark-constrained "
+        "using the public Sleipner storage interval, and the 3D evidence is reported on 11-inline pseudo-3D p07 "
+        "and p10 benchmarks.\n\n"
         f"Results: On the harder benchmark-v2 synthetic OOD split, plain ML reaches Dice "
         f"{synthetic_metrics['ood']['plain_ml']['dice']:.3f}, the hybrid model reaches "
         f"{synthetic_metrics['ood']['hybrid_ml']['dice']:.3f}, and the strongest classical synthetic baseline "
         f"({classical_method}) reaches {synthetic_metrics['ood'][classical_method]['dice']:.3f}. "
         f"On the 11-inline p07 temporal benchmark, structured plain ML improves support-volume IoU from "
-        f"{p07_plain['support_volume_iou_2010']:.3f} to {p07_structured['support_volume_iou_2010']:.3f}, "
-        f"while slightly improving trace-support IoU from {p07_plain['trace_iou_with_2010_support']:.3f} to "
-        f"{p07_structured['trace_iou_with_2010_support']:.3f} and crossline continuity from "
-        f"{p07_plain['crossline_continuity']:.3f} to {p07_structured['crossline_continuity']:.3f}. "
+        f"{p07_plain['support_volume_iou_2010']:.3f} to {p07_structured['support_volume_iou_2010']:.3f}, and the "
+        f"layered variant drops it to {p07_layered['support_volume_iou_2010']:.3f}. Trace-support IoU "
+        f"moves from {p07_plain['trace_iou_with_2010_support']:.3f} to {p07_structured['trace_iou_with_2010_support']:.3f} "
+        f"and then down to {p07_layered['trace_iou_with_2010_support']:.3f}, while crossline continuity moves from "
+        f"{p07_plain['crossline_continuity']:.3f} to {p07_structured['crossline_continuity']:.3f} to "
+        f"{p07_layered['crossline_continuity']:.3f}. "
         f"On the direct 11-inline p10 benchmark, structured plain ML improves support-volume IoU from "
-        f"{p10_plain['support_volume_iou_2010']:.3f} to {p10_structured['support_volume_iou_2010']:.3f}, "
-        f"retains lateral support alignment ({p10_plain['trace_iou_with_2010_support']:.3f} vs "
-        f"{p10_structured['trace_iou_with_2010_support']:.3f}), and exceeds the best constrained classical "
-        f"baseline on support-volume IoU ({p10_structured['support_volume_iou_2010']:.3f} vs "
-        f"{p10_classical['support_volume_iou_2010']:.3f}). "
+        f"{p10_plain['support_volume_iou_2010']:.3f} to {p10_structured['support_volume_iou_2010']:.3f}, and the "
+        f"layered variant drops it to {p10_layered['support_volume_iou_2010']:.3f}. Lateral support alignment "
+        f"moves from {p10_plain['trace_iou_with_2010_support']:.3f} to {p10_structured['trace_iou_with_2010_support']:.3f} "
+        f"and then down to {p10_layered['trace_iou_with_2010_support']:.3f}, and the best constrained classical baseline reaches "
+        f"{p10_classical['support_volume_iou_2010']:.3f} support-volume IoU. "
         f"The hybrid field outputs remain weaker on the direct benchmark "
         f"({p10_hybrid['support_volume_iou_2010']:.3f} support-volume IoU), so the current defensible field claim "
-        "should center on structured plain-ML support mapping rather than the hybrid model."
+        "should center on plain ML plus structured support reconstruction. The layered extension is therefore a "
+        "tested negative result, not the current field method of record."
     )
 
 

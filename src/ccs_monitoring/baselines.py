@@ -45,6 +45,63 @@ def _static_mask(reservoir_mask: np.ndarray | None, shape: tuple[int, int]) -> n
     return np.ones(shape, dtype=bool)
 
 
+def _estimate_trace_lags(
+    baseline: np.ndarray,
+    monitor: np.ndarray,
+    reservoir_mask: np.ndarray | None = None,
+    *,
+    max_lag: int = 4,
+    smoothing_sigma: float = 2.0,
+) -> np.ndarray:
+    static_mask = _static_mask(reservoir_mask, baseline.shape).astype(np.float32)
+    trace_lags = np.zeros(baseline.shape[1], dtype=np.int32)
+    for trace_index in range(baseline.shape[1]):
+        baseline_trace = baseline[:, trace_index]
+        monitor_trace = monitor[:, trace_index]
+        trace_mask = static_mask[:, trace_index]
+        best_lag = 0
+        best_score = float("-inf")
+        for lag in range(-max_lag, max_lag + 1):
+            shifted_trace = np.roll(monitor_trace, shift=lag)
+            score = float(np.sum(trace_mask * baseline_trace * shifted_trace))
+            if score > best_score:
+                best_score = score
+                best_lag = lag
+        trace_lags[trace_index] = best_lag
+
+    if smoothing_sigma > 0.0:
+        trace_lags = np.rint(ndimage.gaussian_filter1d(trace_lags.astype(np.float32), sigma=smoothing_sigma)).astype(
+            np.int32
+        )
+    return trace_lags.astype(np.int32)
+
+
+def _apply_trace_lags(monitor: np.ndarray, trace_lags: np.ndarray) -> np.ndarray:
+    warped = np.zeros_like(monitor, dtype=np.float32)
+    for trace_index, lag in enumerate(trace_lags.astype(np.int32)):
+        warped[:, trace_index] = np.roll(monitor[:, trace_index], shift=int(lag))
+    return warped.astype(np.float32)
+
+
+def _match_monitor_amplitude(
+    baseline: np.ndarray,
+    monitor: np.ndarray,
+    reservoir_mask: np.ndarray | None = None,
+    *,
+    smoothing_sigma: float = 2.0,
+) -> np.ndarray:
+    static_mask = _static_mask(reservoir_mask, baseline.shape).astype(np.float32)
+    weight_sum = np.sum(static_mask, axis=0)
+    gain_numerator = np.sum(static_mask * baseline * monitor, axis=0)
+    gain_denominator = np.sum(static_mask * monitor**2, axis=0)
+    gain = gain_numerator / np.clip(gain_denominator, 1e-6, None)
+    bias = np.sum(static_mask * (baseline - gain[None, :] * monitor), axis=0) / np.clip(weight_sum, 1e-6, None)
+    if smoothing_sigma > 0.0:
+        gain = ndimage.gaussian_filter1d(gain.astype(np.float32), sigma=smoothing_sigma, axis=0)
+        bias = ndimage.gaussian_filter1d(bias.astype(np.float32), sigma=smoothing_sigma, axis=0)
+    return (gain[None, :] * monitor + bias[None, :]).astype(np.float32)
+
+
 def cross_equalize_monitor(
     baseline: np.ndarray,
     monitor: np.ndarray,
@@ -87,40 +144,20 @@ def local_warp_monitor(
     max_lag: int = 4,
     smoothing_sigma: float = 2.0,
 ) -> np.ndarray:
-    static_mask = _static_mask(reservoir_mask, baseline.shape).astype(np.float32)
-    trace_lags = np.zeros(baseline.shape[1], dtype=np.int32)
-    for trace_index in range(baseline.shape[1]):
-        baseline_trace = baseline[:, trace_index]
-        monitor_trace = monitor[:, trace_index]
-        trace_mask = static_mask[:, trace_index]
-        best_lag = 0
-        best_score = float("-inf")
-        for lag in range(-max_lag, max_lag + 1):
-            shifted_trace = np.roll(monitor_trace, shift=lag)
-            score = float(np.sum(trace_mask * baseline_trace * shifted_trace))
-            if score > best_score:
-                best_score = score
-                best_lag = lag
-        trace_lags[trace_index] = best_lag
-
-    if smoothing_sigma > 0.0:
-        trace_lags = np.rint(ndimage.gaussian_filter1d(trace_lags.astype(np.float32), sigma=smoothing_sigma)).astype(
-            np.int32
-        )
-
-    warped = np.zeros_like(monitor, dtype=np.float32)
-    for trace_index, lag in enumerate(trace_lags):
-        warped[:, trace_index] = np.roll(monitor[:, trace_index], shift=int(lag))
-
-    weight_sum = np.sum(static_mask, axis=0)
-    gain_numerator = np.sum(static_mask * baseline * warped, axis=0)
-    gain_denominator = np.sum(static_mask * warped**2, axis=0)
-    gain = gain_numerator / np.clip(gain_denominator, 1e-6, None)
-    bias = np.sum(static_mask * (baseline - gain[None, :] * warped), axis=0) / np.clip(weight_sum, 1e-6, None)
-    if smoothing_sigma > 0.0:
-        gain = ndimage.gaussian_filter1d(gain.astype(np.float32), sigma=smoothing_sigma, axis=0)
-        bias = ndimage.gaussian_filter1d(bias.astype(np.float32), sigma=smoothing_sigma, axis=0)
-    return (gain[None, :] * warped + bias[None, :]).astype(np.float32)
+    trace_lags = _estimate_trace_lags(
+        baseline,
+        monitor,
+        reservoir_mask=reservoir_mask,
+        max_lag=max_lag,
+        smoothing_sigma=smoothing_sigma,
+    )
+    warped = _apply_trace_lags(monitor, trace_lags)
+    return _match_monitor_amplitude(
+        baseline,
+        warped,
+        reservoir_mask=reservoir_mask,
+        smoothing_sigma=smoothing_sigma,
+    )
 
 
 def score_cross_equalized_difference(
@@ -139,6 +176,55 @@ def score_local_warp_difference(
 ) -> np.ndarray:
     warped_monitor = local_warp_monitor(baseline, monitor, reservoir_mask=reservoir_mask)
     return np.abs(warped_monitor - baseline).astype(np.float32)
+
+
+def score_matched_warp_shift_difference(
+    baseline: np.ndarray,
+    monitor: np.ndarray,
+    reservoir_mask: np.ndarray | None = None,
+    *,
+    max_lag: int = 4,
+    smoothing_sigma: float = 2.0,
+    lateral_sigma: float = 3.0,
+    residual_weight: float = 0.7,
+    shift_weight: float = 0.3,
+    epsilon: float = 1e-4,
+) -> np.ndarray:
+    equalized_monitor = cross_equalize_monitor(
+        baseline,
+        monitor,
+        reservoir_mask=reservoir_mask,
+        max_lag=max_lag,
+        lateral_sigma=lateral_sigma,
+    )
+    trace_lags = _estimate_trace_lags(
+        baseline,
+        equalized_monitor,
+        reservoir_mask=reservoir_mask,
+        max_lag=max_lag,
+        smoothing_sigma=smoothing_sigma,
+    )
+    warped_monitor = _apply_trace_lags(equalized_monitor, trace_lags)
+    matched_monitor = _match_monitor_amplitude(
+        baseline,
+        warped_monitor,
+        reservoir_mask=reservoir_mask,
+        smoothing_sigma=smoothing_sigma,
+    )
+
+    residual = np.abs(matched_monitor - baseline)
+    residual = residual / (0.5 * (np.abs(matched_monitor) + np.abs(baseline)) + epsilon)
+
+    reflector_strength = np.abs(ndimage.gaussian_filter1d(np.gradient(baseline, axis=0), sigma=1.0, axis=0))
+    reflector_scale = float(np.quantile(reflector_strength, 0.95)) if reflector_strength.size > 0 else 0.0
+    reflector_strength = reflector_strength / max(reflector_scale, epsilon)
+    shift_map = (np.abs(trace_lags).astype(np.float32)[None, :] / max(float(max_lag), 1.0)) * np.clip(
+        reflector_strength,
+        0.0,
+        1.0,
+    )
+
+    return (residual_weight * residual + shift_weight * shift_map).astype(np.float32)
 
 
 def fit_best_threshold(scores: np.ndarray, labels: np.ndarray) -> float:

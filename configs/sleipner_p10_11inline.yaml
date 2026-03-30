@@ -66,6 +66,20 @@ field:
     opening_iterations: 0
     min_component_size: 0
     keep_largest_components: 0
+  layered_structured_support:
+    enabled: true
+    trace_window_size: 3
+    trace_vote_fraction: 0.34
+    num_bands: 5
+    min_band_peak_probability: 0.5
+    min_band_mean_probability: 0.18
+    min_seed_fraction: 0.02
+    neighbor_probability_weight: 0.3
+    band_smoothing_iterations: 1
+    closing_iterations: 1
+    opening_iterations: 0
+    min_component_size: 0
+    keep_largest_components: 0
 evaluation:
   save_figures: false
 report:

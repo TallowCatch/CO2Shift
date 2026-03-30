@@ -27,6 +27,7 @@ from .baselines import (
     score_difference,
     score_impedance_difference,
     score_local_warp_difference,
+    score_matched_warp_shift_difference,
     score_nrms_difference,
 )
 from .calibration import apply_temperature, fit_temperature, monte_carlo_summary
@@ -63,6 +64,13 @@ CLASSICAL_SCORERS: dict[str, Any] = {
     ),
     "local_warp_difference": (
         lambda baseline, monitor, reservoir_mask: score_local_warp_difference(baseline, monitor, reservoir_mask)
+    ),
+    "matched_warp_shift_difference": (
+        lambda baseline, monitor, reservoir_mask: score_matched_warp_shift_difference(
+            baseline,
+            monitor,
+            reservoir_mask,
+        )
     ),
 }
 
@@ -1027,6 +1035,15 @@ def evaluate(config: dict[str, Any]) -> dict[str, Any]:
                     None,
                     dirs["figures"] / f"field_{field_pair.name}_plain_ml_structured_constrained.png",
                     title=f"Field-style structured plain ML prediction: {field_pair.name}",
+                )
+                _save_prediction_figure(
+                    field_pair.baseline,
+                    field_pair.monitor,
+                    field_output["plain_ml_layered_structured_constrained_binary"].astype(np.float32),
+                    field_output["plain_ml_layered_structured_constrained_uncertainty"],
+                    None,
+                    dirs["figures"] / f"field_{field_pair.name}_plain_ml_layered_structured_constrained.png",
+                    title=f"Field-style layered structured plain ML prediction: {field_pair.name}",
                 )
                 _save_prediction_figure(
                     field_pair.baseline,

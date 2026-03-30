@@ -434,6 +434,7 @@ def _build_slice_browser(dataset: xr.Dataset, variable_name: str, destination: P
 def _friendly_variable_name(variable_name: str) -> str:
     mapping = {
         "plain_ml_structured_constrained": "Structured Plain Support",
+        "plain_ml_layered_structured_constrained": "Layered Structured Plain Support",
         "plain_ml_constrained": "Plain Support",
         "best_classical_constrained": "Best Classical Support",
         "hybrid_ml_constrained": "Hybrid Support",

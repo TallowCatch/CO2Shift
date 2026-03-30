@@ -3,7 +3,7 @@ output_root: runs/paper_evidence
 
 paper_evidence:
   enabled: true
-  claim: "Benchmark-constrained plain ML with structured support reconstruction yields stronger pseudo-3D plume-support volumes than plain ML alone or constrained classical baselines on public Sleipner data, while preserving lateral support alignment."
+  claim: "On a public 11-inline pseudo-3D Sleipner benchmark, benchmark-constrained plain ML with structured support reconstruction yields stronger support-volume maps than constrained classical baselines and plain per-section ML alone, while preserving strong lateral support alignment."
   synthetic_metrics_path: runs/paper_proto/results/metrics.json
   field_summary_path: runs/sleipner_p07_11inline/results/volume_manifest.json
   direct_summary_path: runs/sleipner_p10_11inline/results/volume_manifest.json

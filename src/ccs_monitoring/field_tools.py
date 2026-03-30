@@ -382,6 +382,207 @@ def _reconstruct_support_column(
     return candidate.astype(bool)
 
 
+def _reservoir_band_slices(reservoir_mask: np.ndarray, num_bands: int) -> list[np.ndarray]:
+    support = np.flatnonzero(reservoir_mask > 0.5)
+    if support.size == 0:
+        return []
+    bands = [band.astype(np.int32) for band in np.array_split(support, max(int(num_bands), 1)) if band.size > 0]
+    return bands
+
+
+def _smooth_active_bands(active_bands: np.ndarray, iterations: int) -> np.ndarray:
+    if iterations <= 0 or active_bands.size <= 1:
+        return active_bands.astype(bool)
+    smoothed = active_bands.astype(bool, copy=True)
+    for _ in range(iterations):
+        smoothed = ndimage.binary_closing(smoothed, structure=np.ones(3, dtype=bool))
+    return smoothed.astype(bool)
+
+
+def _activate_layer_bands(
+    probabilities: np.ndarray,
+    seed_binary: np.ndarray,
+    reservoir_mask: np.ndarray,
+    layered_cfg: dict[str, Any],
+    *,
+    neighbor_probabilities: np.ndarray | None = None,
+) -> np.ndarray:
+    band_indices = _reservoir_band_slices(reservoir_mask, int(layered_cfg.get("num_bands", 4)))
+    if not band_indices:
+        return np.zeros(0, dtype=bool)
+
+    probability_profile = probabilities.astype(np.float32)
+    if neighbor_probabilities is not None:
+        weight = float(layered_cfg.get("neighbor_probability_weight", 0.3))
+        probability_profile = (
+            (1.0 - weight) * probability_profile + weight * neighbor_probabilities.astype(np.float32)
+        ).astype(np.float32)
+    probability_profile *= (reservoir_mask > 0.5).astype(np.float32)
+
+    min_peak_probability = float(layered_cfg.get("min_band_peak_probability", 0.5))
+    min_mean_probability = float(layered_cfg.get("min_band_mean_probability", 0.18))
+    min_seed_fraction = float(layered_cfg.get("min_seed_fraction", 0.02))
+
+    active = np.zeros(len(band_indices), dtype=bool)
+    band_scores = np.zeros(len(band_indices), dtype=np.float32)
+    for band_idx, indices in enumerate(band_indices):
+        band_probabilities = probability_profile[indices]
+        band_seed = seed_binary[indices].astype(np.float32)
+        peak_probability = float(np.max(band_probabilities)) if band_probabilities.size > 0 else 0.0
+        mean_probability = float(np.mean(band_probabilities)) if band_probabilities.size > 0 else 0.0
+        seed_fraction = float(np.mean(band_seed)) if band_seed.size > 0 else 0.0
+        band_scores[band_idx] = max(peak_probability, mean_probability, seed_fraction)
+        active[band_idx] = (
+            peak_probability >= min_peak_probability
+            or mean_probability >= min_mean_probability
+            or seed_fraction >= min_seed_fraction
+        )
+
+    if not np.any(active):
+        if np.any(seed_binary & (reservoir_mask > 0.5)):
+            for band_idx, indices in enumerate(band_indices):
+                if np.any(seed_binary[indices]):
+                    active[band_idx] = True
+        else:
+            active[int(np.argmax(band_scores))] = True
+
+    smoothing_iterations = int(layered_cfg.get("band_smoothing_iterations", 1))
+    return _smooth_active_bands(active, smoothing_iterations)
+
+
+def _fill_active_layer_bands(
+    reservoir_mask: np.ndarray,
+    active_bands: np.ndarray,
+    num_bands: int,
+) -> np.ndarray:
+    reconstructed = np.zeros_like(reservoir_mask, dtype=bool)
+    for band_active, indices in zip(active_bands.astype(bool), _reservoir_band_slices(reservoir_mask, num_bands)):
+        if band_active:
+            reconstructed[indices] = True
+    return reconstructed.astype(bool)
+
+
+def _apply_layered_structured_support_reconstruction(
+    outputs: list[dict[str, Any]],
+    config: dict[str, Any],
+    *,
+    method_prefix: str,
+) -> dict[str, dict[str, Any]]:
+    layered_cfg = config.get("field", {}).get("layered_structured_support", {})
+    if not layered_cfg.get("enabled", False):
+        return {}
+
+    grouped_indices = _group_output_indices(outputs, "vintage")
+    results: dict[str, dict[str, Any]] = {}
+    trace_window_size = max(int(layered_cfg.get("trace_window_size", 3)), 1)
+    trace_vote_fraction = float(layered_cfg.get("trace_vote_fraction", 0.34))
+    probability_key = f"{method_prefix}_probs"
+    uncertainty_key = f"{method_prefix}_uncertainty"
+    structured_seed_key = f"{method_prefix}_ml_structured_constrained_binary"
+    constrained_seed_key = f"{method_prefix}_ml_constrained_binary"
+
+    for _vintage_key, indices in grouped_indices.items():
+        ordered_indices = _sorted_indices_by_inline(outputs, indices)
+        probabilities = np.stack([outputs[idx][probability_key].astype(np.float32) for idx in ordered_indices], axis=0)
+        uncertainties = np.stack([outputs[idx][uncertainty_key].astype(np.float32) for idx in ordered_indices], axis=0)
+        reservoir_volume = np.stack(
+            [
+                (
+                    outputs[idx]["pair"].reservoir_mask.astype(np.float32)
+                    if outputs[idx]["pair"].reservoir_mask is not None
+                    else np.ones_like(outputs[idx]["pair"].baseline, dtype=np.float32)
+                )
+                for idx in ordered_indices
+            ],
+            axis=0,
+        )
+        support_volume = np.stack(
+            [
+                (
+                    outputs[idx]["support_volume"].astype(np.float32)
+                    if outputs[idx]["support_volume"] is not None
+                    else reservoir_volume[position]
+                )
+                for position, idx in enumerate(ordered_indices)
+            ],
+            axis=0,
+        )
+        base_binaries = np.stack(
+            [
+                outputs[idx].get(structured_seed_key, outputs[idx][constrained_seed_key]).astype(bool)
+                for idx in ordered_indices
+            ],
+            axis=0,
+        )
+
+        trace_support = np.any(base_binaries, axis=1)
+        layered_trace_support = _trace_support_majority(
+            trace_support,
+            window_size=trace_window_size,
+            vote_fraction=trace_vote_fraction,
+        )
+
+        reconstructed_volume = np.zeros_like(base_binaries, dtype=bool)
+        for position in range(len(ordered_indices)):
+            lower = max(0, position - 1)
+            upper = min(len(ordered_indices), position + 2)
+            neighbor_probability = np.mean(probabilities[lower:upper], axis=0).astype(np.float32)
+            for trace_index in np.where(layered_trace_support[position])[0]:
+                reservoir_column = reservoir_volume[position, :, trace_index]
+                if not np.any(reservoir_column > 0.5):
+                    continue
+                support_column = support_volume[position, :, trace_index]
+                if np.any(support_column > 0.5):
+                    reservoir_column = (reservoir_column > 0.5) & (support_column > 0.5)
+                active_bands = _activate_layer_bands(
+                    probabilities[position, :, trace_index],
+                    base_binaries[position, :, trace_index],
+                    reservoir_column.astype(np.float32),
+                    layered_cfg,
+                    neighbor_probabilities=neighbor_probability[:, trace_index],
+                )
+                reconstructed_volume[position, :, trace_index] = _fill_active_layer_bands(
+                    reservoir_column.astype(np.float32),
+                    active_bands,
+                    int(layered_cfg.get("num_bands", 4)),
+                )
+
+        layered_cleanup_cfg = {
+            "postprocess": config.get("field", {}).get("postprocess", {}),
+            "pseudo3d": {
+                "closing_iterations": int(layered_cfg.get("closing_iterations", 1)),
+                "opening_iterations": int(layered_cfg.get("opening_iterations", 0)),
+                "min_component_size": int(layered_cfg.get("min_component_size", 0)),
+                "min_component_fraction": float(layered_cfg.get("min_component_fraction", 0.0)),
+                "keep_largest_components": int(layered_cfg.get("keep_largest_components", 0)),
+            },
+        }
+        cleaned_volume, volume_metadata = _cleanup_field_volume(
+            reconstructed_volume,
+            reservoir_volume,
+            layered_cleanup_cfg,
+        )
+        for position, index in enumerate(ordered_indices):
+            pair = outputs[index]["pair"]
+            results[pair.name] = {
+                "binary": cleaned_volume[position].astype(bool),
+                "uncertainty": uncertainties[position].astype(np.float32),
+                "metadata": {
+                    "enabled": True,
+                    "layered_structured_support_enabled": True,
+                    "trace_window_size": int(trace_window_size),
+                    "trace_vote_fraction": float(trace_vote_fraction),
+                    "num_bands": int(layered_cfg.get("num_bands", 4)),
+                    "min_band_peak_probability": float(layered_cfg.get("min_band_peak_probability", 0.5)),
+                    "min_band_mean_probability": float(layered_cfg.get("min_band_mean_probability", 0.18)),
+                    "min_seed_fraction": float(layered_cfg.get("min_seed_fraction", 0.02)),
+                    "neighbor_probability_weight": float(layered_cfg.get("neighbor_probability_weight", 0.3)),
+                    **volume_metadata,
+                },
+            }
+    return results
+
+
 def _apply_structured_support_reconstruction(
     outputs: list[dict[str, Any]],
     config: dict[str, Any],
@@ -653,6 +854,10 @@ def _build_volume_summary(
         "plain_ml_structured_constrained": (
             "plain_ml_structured_constrained_binary",
             "plain_ml_structured_constrained_uncertainty",
+        ),
+        "plain_ml_layered_structured_constrained": (
+            "plain_ml_layered_structured_constrained_binary",
+            "plain_ml_layered_structured_constrained_uncertainty",
         ),
         "hybrid_ml_constrained": ("hybrid_ml_constrained_binary", "hybrid_ml_constrained_uncertainty"),
         "hybrid_ml_structured_constrained": (
@@ -967,6 +1172,11 @@ def summarize_field_prediction_bundle(config: dict[str, Any], bundle: FieldPredi
         config,
         method_prefix="plain",
     )
+    plain_layered_structured = _apply_layered_structured_support_reconstruction(
+        bundle.outputs,
+        config,
+        method_prefix="plain",
+    )
     hybrid_structured = _apply_structured_support_reconstruction(
         bundle.outputs,
         config,
@@ -1041,6 +1251,27 @@ def summarize_field_prediction_bundle(config: dict[str, Any], bundle: FieldPredi
             {"metadata": field_output["plain_ml_constraint_metadata"]},
         )["metadata"]
 
+        field_output["plain_ml_layered_structured_constrained_binary"] = plain_layered_structured.get(
+            field_pair.name,
+            {
+                "binary": field_output["plain_ml_structured_constrained_binary"],
+                "uncertainty": field_output["plain_ml_structured_constrained_uncertainty"],
+                "metadata": field_output["plain_ml_structured_constraint_metadata"],
+            },
+        )["binary"].astype(bool)
+        field_output["plain_ml_layered_structured_constrained_uncertainty"] = plain_layered_structured.get(
+            field_pair.name,
+            {
+                "binary": field_output["plain_ml_structured_constrained_binary"],
+                "uncertainty": field_output["plain_ml_structured_constrained_uncertainty"],
+                "metadata": field_output["plain_ml_structured_constraint_metadata"],
+            },
+        )["uncertainty"].astype(np.float32)
+        field_output["plain_ml_layered_structured_constraint_metadata"] = plain_layered_structured.get(
+            field_pair.name,
+            {"metadata": field_output["plain_ml_structured_constraint_metadata"]},
+        )["metadata"]
+
         field_output["hybrid_ml_structured_constrained_binary"] = hybrid_structured.get(
             field_pair.name,
             {
@@ -1113,6 +1344,14 @@ def summarize_field_prediction_bundle(config: dict[str, Any], bundle: FieldPredi
             support_volume,
             field_output["plain_ml_structured_constraint_metadata"],
         )
+        plain_layered_structured_summary = _summarize_binary_pair(
+            field_output["plain_ml_layered_structured_constrained_binary"],
+            field_output["plain_ml_layered_structured_constrained_uncertainty"],
+            field_pair,
+            pair_support_traces,
+            support_volume,
+            field_output["plain_ml_layered_structured_constraint_metadata"],
+        )
         hybrid_structured_summary = _summarize_binary_pair(
             field_output["hybrid_ml_structured_constrained_binary"],
             field_output["hybrid_ml_structured_constrained_uncertainty"],
@@ -1131,6 +1370,7 @@ def summarize_field_prediction_bundle(config: dict[str, Any], bundle: FieldPredi
             "plain_ml_constrained": plain_constrained_summary,
             "plain_ml_pseudo3d_constrained": plain_pseudo3d_summary,
             "plain_ml_structured_constrained": plain_structured_summary,
+            "plain_ml_layered_structured_constrained": plain_layered_structured_summary,
             "hybrid_ml": hybrid_metrics,
             "hybrid_ml_constrained": hybrid_constrained_summary,
             "hybrid_ml_pseudo3d_constrained": hybrid_pseudo3d_summary,
