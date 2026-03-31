@@ -53,6 +53,18 @@ from .metrics import (
 )
 from .model import MonitoringUNet, dice_bce_loss
 from .runtime import ensure_runtime_environment, ensure_torch_seed
+from .temporal import (
+    evaluate_temporal_split,
+    load_temporal_model_artifact,
+    save_temporal_model_artifact,
+    train_temporal_model,
+)
+from .wave_temporal import (
+    evaluate_wave_temporal_split,
+    load_wave_temporal_model_artifact,
+    save_wave_temporal_model_artifact,
+    train_wave_temporal_model,
+)
 
 
 CLASSICAL_SCORERS: dict[str, Any] = {
@@ -854,12 +866,56 @@ def train(config: dict[str, Any]) -> dict[str, Any]:
     _save_model_artifact(dirs["models"] / "plain.pt", plain_artifact)
     _save_model_artifact(dirs["models"] / "hybrid.pt", hybrid_artifact)
 
+    temporal_artifact: dict[str, Any] | None = None
+    if (
+        config.get("temporal", {}).get("enabled", False)
+        and "monitor_sequence" in bundle.train
+        and "change_mask_sequence" in bundle.train
+        and "monitor_sequence" in bundle.val
+        and "change_mask_sequence" in bundle.val
+    ):
+        temporal_artifact = train_temporal_model(
+            bundle.train,
+            bundle.val,
+            config["training"],
+            config["temporal"],
+            seed=config["seed"] + 2,
+        )
+        save_temporal_model_artifact(dirs["models"] / "temporal.pt", temporal_artifact, config["temporal"])
+
+    wave_temporal_artifact: dict[str, Any] | None = None
+    if (
+        config.get("wave_temporal", {}).get("enabled", False)
+        and "monitor_sequence" in bundle.train
+        and "change_mask_sequence" in bundle.train
+        and "monitor_sequence" in bundle.val
+        and "change_mask_sequence" in bundle.val
+    ):
+        wave_temporal_artifact = train_wave_temporal_model(
+            bundle.train,
+            bundle.val,
+            config["training"],
+            config["wave_temporal"],
+            seed=config["seed"] + 3,
+        )
+        save_wave_temporal_model_artifact(
+            dirs["models"] / "wave_temporal.pt",
+            wave_temporal_artifact,
+            config["wave_temporal"],
+        )
+
     training_summary = {
         "plain_history": plain_artifact["history"],
         "hybrid_history": hybrid_artifact["history"],
         "plain_temperature": plain_artifact["temperature"],
         "hybrid_temperature": hybrid_artifact["temperature"],
     }
+    if temporal_artifact is not None:
+        training_summary["temporal_history"] = temporal_artifact["history"]
+        training_summary["temporal_temperature"] = temporal_artifact["temperature"]
+    if wave_temporal_artifact is not None:
+        training_summary["wave_temporal_history"] = wave_temporal_artifact["history"]
+        training_summary["wave_temporal_temperature"] = wave_temporal_artifact["temperature"]
     _save_metrics_json(dirs["results"] / "training_summary.json", training_summary)
     return training_summary
 
@@ -888,6 +944,14 @@ def evaluate(config: dict[str, Any]) -> dict[str, Any]:
 
     plain_artifact = _load_model_artifact(artifacts_root / "models" / "plain.pt", in_channels=2)
     hybrid_artifact = _load_model_artifact(artifacts_root / "models" / "hybrid.pt", in_channels=6)
+    temporal_artifact: dict[str, Any] | None = None
+    temporal_model_path = artifacts_root / "models" / "temporal.pt"
+    if config.get("temporal", {}).get("enabled", False) and temporal_model_path.exists():
+        temporal_artifact = load_temporal_model_artifact(temporal_model_path)
+    wave_temporal_artifact: dict[str, Any] | None = None
+    wave_temporal_model_path = artifacts_root / "models" / "wave_temporal.pt"
+    if config.get("wave_temporal", {}).get("enabled", False) and wave_temporal_model_path.exists():
+        wave_temporal_artifact = load_wave_temporal_model_artifact(wave_temporal_model_path)
     device = torch.device(config["training"].get("device", "cpu"))
 
     results: dict[str, Any] = {
@@ -942,6 +1006,42 @@ def evaluate(config: dict[str, Any]) -> dict[str, Any]:
                 "hybrid_ml": float(hybrid_runtime),
             },
         }
+        if (
+            temporal_artifact is not None
+            and "monitor_sequence" in split
+            and "change_mask_sequence" in split
+        ):
+            temporal_results = evaluate_temporal_split(
+                temporal_artifact,
+                split,
+                config["evaluation"],
+                config["temporal"],
+                device,
+                seed=config["seed"] + (310 if split_name == "test" else 410),
+            )
+            split_metrics["temporal_ml"] = temporal_results["full_observed"]
+            split_metrics["temporal_ml_per_vintage"] = temporal_results["per_vintage"]
+            split_metrics["temporal_ml_held_out_prediction"] = temporal_results["held_out_prediction"]
+            split_metrics["temporal_ml_scenario_breakdown"] = temporal_results["scenario_breakdown"]
+            split_metrics["runtime_seconds"]["temporal_ml"] = float(temporal_results["runtime_seconds"])
+        if (
+            wave_temporal_artifact is not None
+            and "monitor_sequence" in split
+            and "change_mask_sequence" in split
+        ):
+            wave_temporal_results = evaluate_wave_temporal_split(
+                wave_temporal_artifact,
+                split,
+                config["evaluation"],
+                config["wave_temporal"],
+                device,
+                seed=config["seed"] + (510 if split_name == "test" else 610),
+            )
+            split_metrics["wave_temporal_ml"] = wave_temporal_results["full_observed"]
+            split_metrics["wave_temporal_ml_per_vintage"] = wave_temporal_results["per_vintage"]
+            split_metrics["wave_temporal_ml_held_out_prediction"] = wave_temporal_results["held_out_prediction"]
+            split_metrics["wave_temporal_ml_scenario_breakdown"] = wave_temporal_results["scenario_breakdown"]
+            split_metrics["runtime_seconds"]["wave_temporal_ml"] = float(wave_temporal_results["runtime_seconds"])
         for method_name, prediction in classical_predictions.items():
             split_metrics[method_name] = _evaluate_predictions(
                 prediction,
@@ -1045,6 +1145,46 @@ def evaluate(config: dict[str, Any]) -> dict[str, Any]:
                     dirs["figures"] / f"field_{field_pair.name}_plain_ml_layered_structured_constrained.png",
                     title=f"Field-style layered structured plain ML prediction: {field_pair.name}",
                 )
+                if "temporal_ml_constrained_binary" in field_output:
+                    _save_prediction_figure(
+                        field_pair.baseline,
+                        field_pair.monitor,
+                        field_output["temporal_ml_constrained_binary"].astype(np.float32),
+                        field_output["temporal_ml_constrained_uncertainty"],
+                        None,
+                        dirs["figures"] / f"field_{field_pair.name}_temporal_ml_constrained.png",
+                        title=f"Temporal support assimilation prediction: {field_pair.name}",
+                    )
+                if "temporal_leave_one_out_binary" in field_output:
+                    _save_prediction_figure(
+                        field_pair.baseline,
+                        field_pair.monitor,
+                        field_output["temporal_leave_one_out_binary"].astype(np.float32),
+                        field_output["temporal_leave_one_out_uncertainty"],
+                        None,
+                        dirs["figures"] / f"field_{field_pair.name}_temporal_leave_one_out.png",
+                        title=f"Temporal leave-one-out reconstruction: {field_pair.name}",
+                    )
+                if "wave_temporal_constrained_binary" in field_output:
+                    _save_prediction_figure(
+                        field_pair.baseline,
+                        field_pair.monitor,
+                        field_output["wave_temporal_constrained_binary"].astype(np.float32),
+                        field_output["wave_temporal_constrained_uncertainty"],
+                        None,
+                        dirs["figures"] / f"field_{field_pair.name}_wave_temporal_constrained.png",
+                        title=f"Wave-consistent temporal prediction: {field_pair.name}",
+                    )
+                if "wave_temporal_leave_one_out_binary" in field_output:
+                    _save_prediction_figure(
+                        field_pair.baseline,
+                        field_pair.monitor,
+                        field_output["wave_temporal_leave_one_out_binary"].astype(np.float32),
+                        field_output["wave_temporal_leave_one_out_uncertainty"],
+                        None,
+                        dirs["figures"] / f"field_{field_pair.name}_wave_temporal_leave_one_out.png",
+                        title=f"Wave-consistent temporal leave-one-out reconstruction: {field_pair.name}",
+                    )
                 _save_prediction_figure(
                     field_pair.baseline,
                     field_pair.monitor,
@@ -1093,6 +1233,14 @@ def evaluate(config: dict[str, Any]) -> dict[str, Any]:
         "Synthetic OOD": results["ood"]["hybrid_ml"],
         "Field": results.get("field", {"status": "not enabled"}),
     }
+    if "temporal_ml" in results.get("test", {}):
+        summary_sections["Synthetic Test Temporal"] = results["test"]["temporal_ml"]
+    if "temporal_ml" in results.get("ood", {}):
+        summary_sections["Synthetic OOD Temporal"] = results["ood"]["temporal_ml"]
+    if "wave_temporal_ml" in results.get("test", {}):
+        summary_sections["Synthetic Test Wave Temporal"] = results["test"]["wave_temporal_ml"]
+    if "wave_temporal_ml" in results.get("ood", {}):
+        summary_sections["Synthetic OOD Wave Temporal"] = results["ood"]["wave_temporal_ml"]
     _save_metrics_json(dirs["results"] / "metrics.json", results)
     flat_rows: list[dict[str, Any]] = []
     _flatten_results("", results, flat_rows)
@@ -1125,6 +1273,38 @@ def validate_field_setup(config: dict[str, Any]) -> dict[str, Any]:
     summary["mode"] = field_cfg.get("mode", "manifest")
     summary["manifest_path"] = field_cfg.get("manifest_path", "")
     return summary
+
+
+def evaluate_field_only(config: dict[str, Any]) -> dict[str, Any]:
+    ensure_runtime_environment(config["output_root"], config["seed"])
+    output_root = Path(config["output_root"])
+    artifacts_root = _resolve_artifacts_root(config)
+    dirs = _prepare_dirs(output_root)
+
+    from .field_tools import collect_field_prediction_bundle, summarize_field_prediction_bundle
+
+    field_bundle = collect_field_prediction_bundle(config)
+    field_results = summarize_field_prediction_bundle(config, field_bundle)
+    volume_rows = _flatten_volume_summary_rows(field_results.get("volume_summary", {}))
+    if volume_rows:
+        with (dirs["results"] / "volume_metrics.csv").open("w", encoding="utf-8") as handle:
+            handle.write("scope,vintage,method,metric,value\n")
+            for row in volume_rows:
+                handle.write(
+                    f"{row['scope']},{row['vintage']},{row['method']},{row['metric']},{row['value']}\n"
+                )
+
+    summary_payload = {
+        "Overview": {
+            "config_path": config["config_path"],
+            "output_root": str(output_root.resolve()),
+            "artifacts_root": str(artifacts_root.resolve()),
+        },
+        "Field": field_results,
+    }
+    _save_metrics_json(dirs["results"] / "field_metrics.json", field_results)
+    _save_metrics_json(dirs["results"] / "summary.json", summary_payload)
+    return field_results
 
 
 def run_all(config: dict[str, Any]) -> dict[str, Any]:

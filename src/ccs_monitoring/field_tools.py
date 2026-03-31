@@ -29,6 +29,18 @@ from .pipeline import (
     predict_probabilities,
 )
 from .runtime import ensure_runtime_environment
+from .temporal import (
+    build_temporal_sequence_inputs,
+    load_temporal_model_artifact,
+    predict_temporal_probabilities,
+)
+from .wave_temporal import (
+    adapt_wave_temporal_model_to_field,
+    build_wave_temporal_residual_targets,
+    build_wave_temporal_sequence_inputs,
+    load_wave_temporal_model_artifact,
+    predict_wave_temporal_outputs,
+)
 
 
 @dataclass(slots=True)
@@ -75,6 +87,168 @@ def _compute_classical_thresholds(bundle: Any) -> dict[str, float]:
         )
         thresholds[method_name] = fit_best_threshold(scores, bundle.val["change_mask"])
     return thresholds
+
+
+def _attach_temporal_sequence_predictions(
+    outputs: list[dict[str, Any]],
+    config: dict[str, Any],
+    artifacts_root: Path,
+) -> None:
+    temporal_cfg = config.get("temporal", {})
+    if not temporal_cfg.get("enabled", False):
+        return
+
+    temporal_model_path = artifacts_root / "models" / "temporal.pt"
+    if not temporal_model_path.exists():
+        return
+
+    temporal_artifact = load_temporal_model_artifact(temporal_model_path)
+    device = torch.device(config["training"].get("device", "cpu"))
+    grouped_indices = _group_output_indices(outputs, "inline_id")
+    mc_passes = int(temporal_cfg.get("mc_dropout_passes", config["training"].get("mc_dropout_passes", 1)))
+
+    for _inline_key, indices in grouped_indices.items():
+        ordered_indices = _sorted_indices_by_vintage(outputs, indices)
+        baseline = _sequence_baseline(outputs, ordered_indices)
+        monitor_sequence = np.stack(
+            [outputs[index]["pair"].monitor.astype(np.float32) for index in ordered_indices],
+            axis=0,
+        )
+        full_inputs = build_temporal_sequence_inputs(baseline, monitor_sequence)[None, ...]
+        probabilities, uncertainty, _ = predict_temporal_probabilities(
+            temporal_artifact["model"],
+            full_inputs,
+            device,
+            temperature=float(temporal_artifact["temperature"]),
+            mc_passes=mc_passes,
+            seed=int(config["seed"]) + 600,
+        )
+        for position, index in enumerate(ordered_indices):
+            outputs[index]["temporal_probs"] = probabilities[0, position].astype(np.float32)
+            outputs[index]["temporal_uncertainty"] = uncertainty[0, position].astype(np.float32)
+
+        if len(ordered_indices) < 2:
+            continue
+
+        for position, index in enumerate(ordered_indices):
+            hidden_inputs = build_temporal_sequence_inputs(baseline, monitor_sequence, hidden_indices=[position])[None, ...]
+            hidden_probabilities, hidden_uncertainty, _ = predict_temporal_probabilities(
+                temporal_artifact["model"],
+                hidden_inputs,
+                device,
+                temperature=float(temporal_artifact["temperature"]),
+                mc_passes=mc_passes,
+                seed=int(config["seed"]) + 700 + position,
+            )
+            outputs[index]["temporal_leave_one_out_probs"] = hidden_probabilities[0, position].astype(np.float32)
+            outputs[index]["temporal_leave_one_out_uncertainty"] = hidden_uncertainty[0, position].astype(np.float32)
+
+
+def _attach_wave_temporal_sequence_predictions(
+    outputs: list[dict[str, Any]],
+    config: dict[str, Any],
+    artifacts_root: Path,
+) -> None:
+    wave_cfg = config.get("wave_temporal", {})
+    if not wave_cfg.get("enabled", False):
+        return
+
+    wave_model_path = artifacts_root / "models" / "wave_temporal.pt"
+    if not wave_model_path.exists():
+        return
+
+    wave_artifact = load_wave_temporal_model_artifact(wave_model_path)
+    device = torch.device(config["training"].get("device", "cpu"))
+    grouped_indices = _group_output_indices(outputs, "inline_id")
+    mc_passes = int(wave_cfg.get("mc_dropout_passes", config["training"].get("mc_dropout_passes", 1)))
+
+    grouped_sequences: list[dict[str, np.ndarray]] = []
+    ordered_groups: list[list[int]] = []
+    ordered_inline_keys = sorted(grouped_indices, key=_sort_metadata_label)
+    for inline_key in ordered_inline_keys:
+        indices = grouped_indices[inline_key]
+        ordered_indices = _sorted_indices_by_vintage(outputs, indices)
+        baseline = _sequence_baseline(outputs, ordered_indices)
+        monitor_sequence = np.stack(
+            [outputs[index]["pair"].monitor.astype(np.float32) for index in ordered_indices],
+            axis=0,
+        )
+        pair_reservoir_mask = outputs[ordered_indices[0]]["pair"].reservoir_mask
+        reservoir_mask = (
+            pair_reservoir_mask.astype(np.float32)
+            if pair_reservoir_mask is not None
+            else np.ones_like(baseline, dtype=np.float32)
+        )
+        grouped_sequences.append(
+            {
+                "inputs": build_wave_temporal_sequence_inputs(baseline, monitor_sequence),
+                "residual_targets": build_wave_temporal_residual_targets(baseline, monitor_sequence),
+                "reservoir_mask": reservoir_mask,
+            }
+        )
+        ordered_groups.append(ordered_indices)
+
+    adapted_artifact = adapt_wave_temporal_model_to_field(
+        wave_artifact,
+        grouped_sequences,
+        wave_cfg,
+        device,
+        seed=int(config["seed"]) + 800,
+    )
+
+    for ordered_indices, grouped_sequence in zip(ordered_groups, grouped_sequences):
+        baseline = outputs[ordered_indices[0]]["pair"].baseline.astype(np.float32)
+        monitor_sequence = np.stack(
+            [outputs[index]["pair"].monitor.astype(np.float32) for index in ordered_indices],
+            axis=0,
+        )
+        full_inputs = grouped_sequence["inputs"][None, ...]
+        probabilities, uncertainty, predicted_residual, amplitude, time_shift, _ = predict_wave_temporal_outputs(
+            adapted_artifact["model"],
+            full_inputs,
+            device,
+            temperature=float(adapted_artifact["temperature"]),
+            mc_passes=mc_passes,
+            seed=int(config["seed"]) + 900,
+        )
+        for position, index in enumerate(ordered_indices):
+            outputs[index]["wave_temporal_probs"] = probabilities[0, position].astype(np.float32)
+            outputs[index]["wave_temporal_uncertainty"] = uncertainty[0, position].astype(np.float32)
+            outputs[index]["wave_temporal_predicted_residual"] = predicted_residual[0, position].astype(np.float32)
+            outputs[index]["wave_temporal_amplitude_perturbation"] = amplitude[0, position].astype(np.float32)
+            outputs[index]["wave_temporal_time_shift_field"] = time_shift[0, position].astype(np.float32)
+
+        if len(ordered_indices) < 2:
+            continue
+
+        for position, index in enumerate(ordered_indices):
+            hidden_inputs = build_wave_temporal_sequence_inputs(
+                baseline,
+                monitor_sequence,
+                hidden_indices=[position],
+            )[None, ...]
+            (
+                hidden_probabilities,
+                hidden_uncertainty,
+                hidden_predicted_residual,
+                _hidden_amplitude,
+                _hidden_time_shift,
+                _,
+            ) = predict_wave_temporal_outputs(
+                adapted_artifact["model"],
+                hidden_inputs,
+                device,
+                temperature=float(adapted_artifact["temperature"]),
+                mc_passes=mc_passes,
+                seed=int(config["seed"]) + 1000 + position,
+            )
+            outputs[index]["wave_temporal_leave_one_out_probs"] = hidden_probabilities[0, position].astype(np.float32)
+            outputs[index]["wave_temporal_leave_one_out_uncertainty"] = hidden_uncertainty[0, position].astype(
+                np.float32
+            )
+            outputs[index]["wave_temporal_leave_one_out_predicted_residual"] = hidden_predicted_residual[
+                0, position
+            ].astype(np.float32)
 
 
 def collect_field_prediction_bundle(config: dict[str, Any]) -> FieldPredictionBundle:
@@ -140,6 +314,8 @@ def collect_field_prediction_bundle(config: dict[str, Any]) -> FieldPredictionBu
         [entry["pair"].reservoir_mask for entry in outputs],
         config.get("field", {}),
     )
+    _attach_temporal_sequence_predictions(outputs, config, artifacts_root)
+    _attach_wave_temporal_sequence_predictions(outputs, config, artifacts_root)
 
     return FieldPredictionBundle(
         artifacts_root=artifacts_root,
@@ -196,6 +372,24 @@ def _summarize_binary_pair(
     }
 
 
+def _residual_fit_metrics(
+    predicted_residual: np.ndarray,
+    field_pair: FieldPair,
+) -> dict[str, Any]:
+    observed_residual = field_pair.monitor.astype(np.float32) - field_pair.baseline.astype(np.float32)
+    reservoir_mask = field_pair.reservoir_mask.astype(np.float32) if field_pair.reservoir_mask is not None else None
+    residual_error = predicted_residual.astype(np.float32) - observed_residual
+    payload = {
+        "residual_fit_mae": float(np.mean(np.abs(residual_error))),
+        "residual_fit_rmse": float(np.sqrt(np.mean(residual_error**2))),
+    }
+    if reservoir_mask is not None and np.any(reservoir_mask > 0.5):
+        valid = reservoir_mask > 0.5
+        payload["reservoir_residual_fit_mae"] = float(np.mean(np.abs(residual_error[valid])))
+        payload["reservoir_residual_fit_rmse"] = float(np.sqrt(np.mean(residual_error[valid] ** 2)))
+    return payload
+
+
 def _summarize_classical_pair(
     method_name: str,
     scores: np.ndarray,
@@ -242,6 +436,10 @@ def _group_output_indices(bundle_outputs: list[dict[str, Any]], metadata_key: st
     return groups
 
 
+def _sort_metadata_label(value: str) -> tuple[int, int | str]:
+    return (0, int(value)) if str(value).isdigit() else (1, str(value))
+
+
 def _sorted_indices_by_inline(bundle_outputs: list[dict[str, Any]], indices: list[int]) -> list[int]:
     return sorted(
         indices,
@@ -250,6 +448,25 @@ def _sorted_indices_by_inline(bundle_outputs: list[dict[str, Any]], indices: lis
             bundle_outputs[idx]["pair"].name,
         ),
     )
+
+
+def _sorted_indices_by_vintage(bundle_outputs: list[dict[str, Any]], indices: list[int]) -> list[int]:
+    return sorted(
+        indices,
+        key=lambda idx: (
+            _sort_metadata_label(_field_group_key(bundle_outputs[idx]["pair"], "vintage", bundle_outputs[idx]["pair"].name)),
+            int((bundle_outputs[idx]["pair"].metadata or {}).get("inline_id", 0)),
+            bundle_outputs[idx]["pair"].name,
+        ),
+    )
+
+
+def _sequence_baseline(outputs: list[dict[str, Any]], indices: list[int]) -> np.ndarray:
+    baselines = np.stack([outputs[index]["pair"].baseline.astype(np.float32) for index in indices], axis=0)
+    reference = baselines[0]
+    if np.allclose(baselines, reference[None, ...], atol=1e-6):
+        return reference.astype(np.float32)
+    return np.mean(baselines, axis=0).astype(np.float32)
 
 
 def _cleanup_field_volume(
@@ -859,6 +1076,8 @@ def _build_volume_summary(
             "plain_ml_layered_structured_constrained_binary",
             "plain_ml_layered_structured_constrained_uncertainty",
         ),
+        "temporal_ml_constrained": ("temporal_ml_constrained_binary", "temporal_ml_constrained_uncertainty"),
+        "wave_temporal_constrained": ("wave_temporal_constrained_binary", "wave_temporal_constrained_uncertainty"),
         "hybrid_ml_constrained": ("hybrid_ml_constrained_binary", "hybrid_ml_constrained_uncertainty"),
         "hybrid_ml_structured_constrained": (
             "hybrid_ml_structured_constrained_binary",
@@ -868,6 +1087,11 @@ def _build_volume_summary(
             "hybrid_ml_pseudo3d_constrained_binary",
             "hybrid_ml_pseudo3d_constrained_uncertainty",
         ),
+    }
+    available_methods = {
+        method_name: keys
+        for method_name, keys in methods.items()
+        if all(keys[0] in output and keys[1] in output for output in outputs)
     }
     by_vintage: dict[str, dict[str, Any]] = {}
     grouped_indices = _group_output_indices(outputs, "vintage")
@@ -903,7 +1127,7 @@ def _build_volume_summary(
             axis=0,
         )
         by_vintage[vintage_key] = {}
-        for method_name, (binary_key, uncertainty_key) in methods.items():
+        for method_name, (binary_key, uncertainty_key) in available_methods.items():
             binary_volume = np.stack([outputs[index][binary_key].astype(bool) for index in ordered_indices], axis=0)
             uncertainty_volume = np.stack(
                 [outputs[index][uncertainty_key].astype(np.float32) for index in ordered_indices],
@@ -1068,6 +1292,174 @@ def _build_temporal_volume_consistency(volume_summary: dict[str, Any]) -> dict[s
     return consistency
 
 
+def _sequence_monotonicity_from_fractions(fractions: list[float]) -> float:
+    if len(fractions) < 2:
+        return float("nan")
+    penalties: list[float] = []
+    for earlier, later in zip(fractions[:-1], fractions[1:]):
+        if np.isnan(earlier) or np.isnan(later):
+            continue
+        penalties.append(max(earlier - later, 0.0) / max(earlier, 1e-6))
+    if not penalties:
+        return float("nan")
+    return float(np.clip(1.0 - np.mean(penalties), 0.0, 1.0))
+
+
+def _growth_adjacency_from_volumes(volumes: list[np.ndarray]) -> float:
+    if len(volumes) < 2:
+        return float("nan")
+    structure = np.ones((3, 3, 3), dtype=bool)
+    scores: list[float] = []
+    for previous_volume, current_volume in zip(volumes[:-1], volumes[1:]):
+        previous_binary = previous_volume.astype(bool)
+        current_binary = current_volume.astype(bool)
+        new_support = current_binary & ~previous_binary
+        if np.sum(new_support) == 0:
+            scores.append(1.0)
+            continue
+        dilated_previous = ndimage.binary_dilation(previous_binary, structure=structure, iterations=1)
+        scores.append(float(np.sum(new_support & dilated_previous) / max(np.sum(new_support), 1)))
+    return float(np.mean(scores)) if scores else float("nan")
+
+
+def _build_sequence_method_summary(outputs: list[dict[str, Any]]) -> dict[str, Any]:
+    by_vintage = _group_output_indices(outputs, "vintage")
+    if len(by_vintage) < 2:
+        return {}
+
+    ordered_vintages = sorted(by_vintage, key=_sort_metadata_label)
+    inline_ids = sorted(
+        {
+            _field_group_key(output["pair"], "inline_id", output["pair"].name)
+            for output in outputs
+        },
+        key=_sort_metadata_label,
+    )
+    inline_index = {inline_id: idx for idx, inline_id in enumerate(inline_ids)}
+    first_pair = outputs[0]["pair"]
+    nt, nx = first_pair.baseline.shape
+    method_keys = {
+        "best_classical_constrained": "best_classical_constrained_binary",
+        "plain_ml_constrained": "plain_ml_constrained_binary",
+        "plain_ml_structured_constrained": "plain_ml_structured_constrained_binary",
+        "temporal_ml_constrained": "temporal_ml_constrained_binary",
+        "wave_temporal_constrained": "wave_temporal_constrained_binary",
+    }
+    available_methods = {
+        method_name: binary_key
+        for method_name, binary_key in method_keys.items()
+        if all(binary_key in output for output in outputs)
+    }
+    if not available_methods:
+        return {}
+
+    summary: dict[str, Any] = {"ordered_vintages": ordered_vintages, "methods": {}}
+    for method_name, binary_key in available_methods.items():
+        sequence_volumes: list[np.ndarray] = []
+        predicted_fractions: list[float] = []
+        crossline_continuity: list[float] = []
+        for vintage in ordered_vintages:
+            vintage_volume = np.zeros((len(inline_ids), nt, nx), dtype=bool)
+            ordered_indices = _sorted_indices_by_inline(outputs, by_vintage[vintage])
+            for index in ordered_indices:
+                inline_id = _field_group_key(outputs[index]["pair"], "inline_id", outputs[index]["pair"].name)
+                vintage_volume[inline_index[inline_id]] = outputs[index][binary_key].astype(bool)
+            sequence_volumes.append(vintage_volume)
+            trace_masks = np.any(vintage_volume, axis=1)
+            predicted_fractions.append(float(np.mean(vintage_volume)))
+            crossline_continuity.append(_crossline_continuity(trace_masks))
+
+        summary["methods"][method_name] = {
+            "temporal_monotonicity_score": _sequence_monotonicity_from_fractions(predicted_fractions),
+            "growth_adjacency_score": _growth_adjacency_from_volumes(sequence_volumes),
+            "predicted_fraction_by_vintage": {
+                vintage: float(value) for vintage, value in zip(ordered_vintages, predicted_fractions)
+            },
+            "crossline_continuity_by_vintage": {
+                vintage: float(value) for vintage, value in zip(ordered_vintages, crossline_continuity)
+            },
+        }
+    return summary
+
+
+def _build_leave_one_out_summary(outputs: list[dict[str, Any]]) -> dict[str, Any]:
+    eligible_outputs = [
+        output
+        for output in outputs
+        if "temporal_leave_one_out_binary" in output and "temporal_ml_constrained_binary" in output
+    ]
+    if not eligible_outputs:
+        return {}
+
+    by_vintage: dict[str, list[dict[str, Any]]] = {}
+    for output in eligible_outputs:
+        vintage = _field_group_key(output["pair"], "vintage", output["pair"].name)
+        full_binary = output["temporal_ml_constrained_binary"].astype(bool)
+        heldout_binary = output["temporal_leave_one_out_binary"].astype(bool)
+        by_vintage.setdefault(vintage, []).append(
+            {
+                "full_vs_heldout_binary_iou": _binary_iou(full_binary, heldout_binary),
+                "full_vs_heldout_trace_iou": _binary_iou(np.any(full_binary, axis=0), np.any(heldout_binary, axis=0)),
+                "heldout_predicted_fraction": float(np.mean(heldout_binary)),
+                "full_predicted_fraction": float(np.mean(full_binary)),
+                "heldout_fraction_shift": float(abs(np.mean(full_binary) - np.mean(heldout_binary))),
+                "heldout_support_volume_iou_2010": float(
+                    output["temporal_leave_one_out_summary"].get("support_volume_iou_2010", float("nan"))
+                ),
+                "heldout_trace_support_iou": float(
+                    output["temporal_leave_one_out_summary"].get("trace_iou_with_2010_support", float("nan"))
+                ),
+            }
+        )
+
+    return {
+        "by_vintage": {vintage: _mean_numeric_dict(rows) for vintage, rows in by_vintage.items()},
+        "overall": _mean_numeric_dict([row for rows in by_vintage.values() for row in rows]),
+    }
+
+
+def _build_wave_leave_one_out_summary(outputs: list[dict[str, Any]]) -> dict[str, Any]:
+    eligible_outputs = [
+        output
+        for output in outputs
+        if "wave_temporal_leave_one_out_binary" in output and "wave_temporal_constrained_binary" in output
+    ]
+    if not eligible_outputs:
+        return {}
+
+    by_vintage: dict[str, list[dict[str, Any]]] = {}
+    for output in eligible_outputs:
+        vintage = _field_group_key(output["pair"], "vintage", output["pair"].name)
+        full_binary = output["wave_temporal_constrained_binary"].astype(bool)
+        heldout_binary = output["wave_temporal_leave_one_out_binary"].astype(bool)
+        by_vintage.setdefault(vintage, []).append(
+            {
+                "full_vs_heldout_binary_iou": _binary_iou(full_binary, heldout_binary),
+                "full_vs_heldout_trace_iou": _binary_iou(np.any(full_binary, axis=0), np.any(heldout_binary, axis=0)),
+                "heldout_predicted_fraction": float(np.mean(heldout_binary)),
+                "full_predicted_fraction": float(np.mean(full_binary)),
+                "heldout_fraction_shift": float(abs(np.mean(full_binary) - np.mean(heldout_binary))),
+                "heldout_support_volume_iou_2010": float(
+                    output["wave_temporal_leave_one_out_summary"].get("support_volume_iou_2010", float("nan"))
+                ),
+                "heldout_trace_support_iou": float(
+                    output["wave_temporal_leave_one_out_summary"].get("trace_iou_with_2010_support", float("nan"))
+                ),
+                "heldout_residual_fit_mae": float(
+                    output["wave_temporal_leave_one_out_summary"].get("residual_fit_mae", float("nan"))
+                ),
+                "heldout_residual_fit_rmse": float(
+                    output["wave_temporal_leave_one_out_summary"].get("residual_fit_rmse", float("nan"))
+                ),
+            }
+        )
+
+    return {
+        "by_vintage": {vintage: _mean_numeric_dict(rows) for vintage, rows in by_vintage.items()},
+        "overall": _mean_numeric_dict([row for rows in by_vintage.values() for row in rows]),
+    }
+
+
 def _mean_valid(values: list[float]) -> float:
     if not values:
         return float("nan")
@@ -1146,6 +1538,57 @@ def summarize_field_prediction_bundle(config: dict[str, Any], bundle: FieldPredi
         field_output["hybrid_ml_constrained_binary"] = hybrid_constrained_binary.astype(bool)
         field_output["hybrid_ml_constrained_uncertainty"] = field_output["hybrid_uncertainty"].astype(np.float32)
         field_output["hybrid_ml_constraint_metadata"] = hybrid_constraint_metadata
+
+        if "temporal_probs" in field_output:
+            temporal_constrained_binary, temporal_constraint_metadata = _postprocess_field_prediction(
+                field_output["temporal_probs"],
+                field_output["temporal_uncertainty"],
+                field_pair.reservoir_mask,
+                config.get("field", {}),
+                shared_context=bundle.shared_context,
+            )
+            field_output["temporal_ml_constrained_binary"] = temporal_constrained_binary.astype(bool)
+            field_output["temporal_ml_constrained_uncertainty"] = field_output["temporal_uncertainty"].astype(np.float32)
+            field_output["temporal_ml_constraint_metadata"] = temporal_constraint_metadata
+        if "temporal_leave_one_out_probs" in field_output:
+            leave_one_out_binary, leave_one_out_metadata = _postprocess_field_prediction(
+                field_output["temporal_leave_one_out_probs"],
+                field_output["temporal_leave_one_out_uncertainty"],
+                field_pair.reservoir_mask,
+                config.get("field", {}),
+                shared_context=bundle.shared_context,
+            )
+            field_output["temporal_leave_one_out_binary"] = leave_one_out_binary.astype(bool)
+            field_output["temporal_leave_one_out_uncertainty"] = field_output["temporal_leave_one_out_uncertainty"].astype(
+                np.float32
+            )
+            field_output["temporal_leave_one_out_constraint_metadata"] = leave_one_out_metadata
+        if "wave_temporal_probs" in field_output:
+            wave_binary, wave_metadata = _postprocess_field_prediction(
+                field_output["wave_temporal_probs"],
+                field_output["wave_temporal_uncertainty"],
+                field_pair.reservoir_mask,
+                config.get("field", {}),
+                shared_context=bundle.shared_context,
+            )
+            field_output["wave_temporal_constrained_binary"] = wave_binary.astype(bool)
+            field_output["wave_temporal_constrained_uncertainty"] = field_output["wave_temporal_uncertainty"].astype(
+                np.float32
+            )
+            field_output["wave_temporal_constraint_metadata"] = wave_metadata
+        if "wave_temporal_leave_one_out_probs" in field_output:
+            wave_leave_one_out_binary, wave_leave_one_out_metadata = _postprocess_field_prediction(
+                field_output["wave_temporal_leave_one_out_probs"],
+                field_output["wave_temporal_leave_one_out_uncertainty"],
+                field_pair.reservoir_mask,
+                config.get("field", {}),
+                shared_context=bundle.shared_context,
+            )
+            field_output["wave_temporal_leave_one_out_binary"] = wave_leave_one_out_binary.astype(bool)
+            field_output["wave_temporal_leave_one_out_uncertainty"] = field_output[
+                "wave_temporal_leave_one_out_uncertainty"
+            ].astype(np.float32)
+            field_output["wave_temporal_leave_one_out_constraint_metadata"] = wave_leave_one_out_metadata
 
         best_classical_method = max(
             classical_results,
@@ -1303,6 +1746,23 @@ def summarize_field_prediction_bundle(config: dict[str, Any], bundle: FieldPredi
             field_output["plain_uncertainty"],
             field_pair.reservoir_mask,
         )
+        temporal_metrics = None
+        if "temporal_probs" in field_output:
+            temporal_metrics = _evaluate_field_prediction(
+                field_output["temporal_probs"],
+                field_output["temporal_uncertainty"],
+                field_pair.reservoir_mask,
+            )
+        wave_temporal_metrics = None
+        if "wave_temporal_probs" in field_output:
+            wave_temporal_metrics = {
+                **_evaluate_field_prediction(
+                    field_output["wave_temporal_probs"],
+                    field_output["wave_temporal_uncertainty"],
+                    field_pair.reservoir_mask,
+                ),
+                **_residual_fit_metrics(field_output["wave_temporal_predicted_residual"], field_pair),
+            }
 
         plain_constrained_summary = _summarize_binary_pair(
             field_output["plain_ml_constrained_binary"],
@@ -1360,10 +1820,58 @@ def summarize_field_prediction_bundle(config: dict[str, Any], bundle: FieldPredi
             support_volume,
             field_output["hybrid_ml_structured_constraint_metadata"],
         )
+        temporal_constrained_summary = None
+        if "temporal_ml_constrained_binary" in field_output:
+            temporal_constrained_summary = _summarize_binary_pair(
+                field_output["temporal_ml_constrained_binary"],
+                field_output["temporal_ml_constrained_uncertainty"],
+                field_pair,
+                pair_support_traces,
+                support_volume,
+                field_output["temporal_ml_constraint_metadata"],
+            )
+        temporal_leave_one_out_summary = None
+        if "temporal_leave_one_out_binary" in field_output:
+            temporal_leave_one_out_summary = _summarize_binary_pair(
+                field_output["temporal_leave_one_out_binary"],
+                field_output["temporal_leave_one_out_uncertainty"],
+                field_pair,
+                pair_support_traces,
+                support_volume,
+                field_output["temporal_leave_one_out_constraint_metadata"],
+            )
+            field_output["temporal_leave_one_out_summary"] = temporal_leave_one_out_summary
+        wave_temporal_constrained_summary = None
+        if "wave_temporal_constrained_binary" in field_output:
+            wave_temporal_constrained_summary = {
+                **_summarize_binary_pair(
+                    field_output["wave_temporal_constrained_binary"],
+                    field_output["wave_temporal_constrained_uncertainty"],
+                    field_pair,
+                    pair_support_traces,
+                    support_volume,
+                    field_output["wave_temporal_constraint_metadata"],
+                ),
+                **_residual_fit_metrics(field_output["wave_temporal_predicted_residual"], field_pair),
+            }
+        wave_temporal_leave_one_out_summary = None
+        if "wave_temporal_leave_one_out_binary" in field_output:
+            wave_temporal_leave_one_out_summary = {
+                **_summarize_binary_pair(
+                    field_output["wave_temporal_leave_one_out_binary"],
+                    field_output["wave_temporal_leave_one_out_uncertainty"],
+                    field_pair,
+                    pair_support_traces,
+                    support_volume,
+                    field_output["wave_temporal_leave_one_out_constraint_metadata"],
+                ),
+                **_residual_fit_metrics(field_output["wave_temporal_leave_one_out_predicted_residual"], field_pair),
+            }
+            field_output["wave_temporal_leave_one_out_summary"] = wave_temporal_leave_one_out_summary
         best_classical_summary = dict(field_output["classical_results"][field_output["best_classical_method"]])
         best_classical_summary["method_name"] = field_output["best_classical_method"]
 
-        pair_results[field_pair.name] = {
+        pair_result = {
             **field_output["classical_results"],
             "best_classical_constrained": best_classical_summary,
             "plain_ml": plain_metrics,
@@ -1378,6 +1886,17 @@ def summarize_field_prediction_bundle(config: dict[str, Any], bundle: FieldPredi
             "best_constrained_classical_method": field_output["best_classical_method"],
             "metadata": field_pair.metadata or {},
         }
+        if temporal_metrics is not None and temporal_constrained_summary is not None:
+            pair_result["temporal_ml"] = temporal_metrics
+            pair_result["temporal_ml_constrained"] = temporal_constrained_summary
+        if temporal_leave_one_out_summary is not None:
+            pair_result["temporal_ml_leave_one_out"] = temporal_leave_one_out_summary
+        if wave_temporal_metrics is not None and wave_temporal_constrained_summary is not None:
+            pair_result["wave_temporal_ml"] = wave_temporal_metrics
+            pair_result["wave_temporal_ml_constrained"] = wave_temporal_constrained_summary
+        if wave_temporal_leave_one_out_summary is not None:
+            pair_result["wave_temporal_ml_leave_one_out"] = wave_temporal_leave_one_out_summary
+        pair_results[field_pair.name] = pair_result
 
         if not np.isnan(hybrid_metrics["compactness"]):
             raw_compactness_values.append(hybrid_metrics["compactness"])
@@ -1464,6 +1983,18 @@ def summarize_field_prediction_bundle(config: dict[str, Any], bundle: FieldPredi
     temporal_volume_consistency = _build_temporal_volume_consistency(field_summary["volume_summary"])
     if temporal_volume_consistency:
         field_summary["temporal_volume_consistency"] = temporal_volume_consistency
+
+    sequence_method_summary = _build_sequence_method_summary(bundle.outputs)
+    if sequence_method_summary:
+        field_summary["sequence_method_summary"] = sequence_method_summary
+
+    leave_one_out_summary = _build_leave_one_out_summary(bundle.outputs)
+    if leave_one_out_summary:
+        field_summary["leave_one_out_summary"] = leave_one_out_summary
+
+    wave_leave_one_out_summary = _build_wave_leave_one_out_summary(bundle.outputs)
+    if wave_leave_one_out_summary:
+        field_summary["wave_leave_one_out_summary"] = wave_leave_one_out_summary
 
     if bundle.plume_support_traces is not None:
         support_note = str(config.get("field", {}).get("plume_support_note", "")).strip()

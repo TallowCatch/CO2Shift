@@ -203,3 +203,25 @@ def support_coverage(binary_map: np.ndarray, support_mask: np.ndarray | None) ->
     support = support_mask > 0.5
     support_count = np.sum(support)
     return float(np.sum(binary_map & support) / max(support_count, 1))
+
+
+def residual_mae(prediction: np.ndarray, target: np.ndarray, mask: np.ndarray | None = None) -> float:
+    prediction = prediction.astype(np.float64)
+    target = target.astype(np.float64)
+    if mask is not None:
+        valid = mask > 0.5
+        if not np.any(valid):
+            return float("nan")
+        return float(np.mean(np.abs(prediction[valid] - target[valid])))
+    return float(np.mean(np.abs(prediction - target)))
+
+
+def residual_rmse(prediction: np.ndarray, target: np.ndarray, mask: np.ndarray | None = None) -> float:
+    prediction = prediction.astype(np.float64)
+    target = target.astype(np.float64)
+    if mask is not None:
+        valid = mask > 0.5
+        if not np.any(valid):
+            return float("nan")
+        return float(np.sqrt(np.mean((prediction[valid] - target[valid]) ** 2)))
+    return float(np.sqrt(np.mean((prediction - target) ** 2)))

@@ -11,7 +11,7 @@ os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 from .config import load_config
 from .jax_sidecar import benchmark_jax_wave_lab
 from .paper import build_paper_evidence
-from .pipeline import evaluate, generate, run_all, train, validate_field_setup
+from .pipeline import evaluate, evaluate_field_only, generate, run_all, train, validate_field_setup
 from .seed_sweep import run_seed_sweep
 from .sleipner import (
     export_sleipner_inline_section,
@@ -31,6 +31,7 @@ def _build_parser() -> argparse.ArgumentParser:
         ("generate", "Generate synthetic benchmark"),
         ("train", "Train ML baselines"),
         ("evaluate", "Evaluate all baselines and models"),
+        ("evaluate-field", "Evaluate only the field benchmark path"),
         ("run-all", "Run generation, training, and evaluation"),
         ("validate-field", "Validate a real-data field manifest or field input config"),
         ("export-sleipner-inline", "Export a normalized Sleipner inline section to .npy"),
@@ -60,6 +61,8 @@ def main() -> None:
         result = train(config)
     elif args.command == "evaluate":
         result = evaluate(config)
+    elif args.command == "evaluate-field":
+        result = evaluate_field_only(config)
     elif args.command == "run-all":
         result = run_all(config)
     elif args.command == "validate-field":

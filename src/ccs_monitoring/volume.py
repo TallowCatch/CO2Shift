@@ -46,6 +46,20 @@ def build_volume(config: dict[str, Any]) -> dict[str, Any]:
     plain_ml_pseudo3d_constrained = np.full((inline_count, vintage_count, nt, nx), np.nan, dtype=np.float32)
     plain_ml_structured_constrained = np.full((inline_count, vintage_count, nt, nx), np.nan, dtype=np.float32)
     plain_ml_layered_structured_constrained = np.full((inline_count, vintage_count, nt, nx), np.nan, dtype=np.float32)
+    temporal_probability = np.full((inline_count, vintage_count, nt, nx), np.nan, dtype=np.float32)
+    temporal_uncertainty = np.full((inline_count, vintage_count, nt, nx), np.nan, dtype=np.float32)
+    temporal_ml_constrained = np.full((inline_count, vintage_count, nt, nx), np.nan, dtype=np.float32)
+    temporal_leave_one_out_probability = np.full((inline_count, vintage_count, nt, nx), np.nan, dtype=np.float32)
+    temporal_leave_one_out_uncertainty = np.full((inline_count, vintage_count, nt, nx), np.nan, dtype=np.float32)
+    temporal_leave_one_out_constrained = np.full((inline_count, vintage_count, nt, nx), np.nan, dtype=np.float32)
+    wave_temporal_probability = np.full((inline_count, vintage_count, nt, nx), np.nan, dtype=np.float32)
+    wave_temporal_uncertainty = np.full((inline_count, vintage_count, nt, nx), np.nan, dtype=np.float32)
+    wave_temporal_constrained = np.full((inline_count, vintage_count, nt, nx), np.nan, dtype=np.float32)
+    wave_temporal_predicted_residual = np.full((inline_count, vintage_count, nt, nx), np.nan, dtype=np.float32)
+    wave_temporal_heldout_probability = np.full((inline_count, vintage_count, nt, nx), np.nan, dtype=np.float32)
+    wave_temporal_heldout_uncertainty = np.full((inline_count, vintage_count, nt, nx), np.nan, dtype=np.float32)
+    wave_temporal_heldout_constrained = np.full((inline_count, vintage_count, nt, nx), np.nan, dtype=np.float32)
+    wave_temporal_heldout_predicted_residual = np.full((inline_count, vintage_count, nt, nx), np.nan, dtype=np.float32)
     hybrid_constrained = np.full((inline_count, vintage_count, nt, nx), np.nan, dtype=np.float32)
     hybrid_structured_constrained = np.full((inline_count, vintage_count, nt, nx), np.nan, dtype=np.float32)
     hybrid_pseudo3d_constrained = np.full((inline_count, vintage_count, nt, nx), np.nan, dtype=np.float32)
@@ -99,6 +113,42 @@ def build_volume(config: dict[str, Any]) -> dict[str, Any]:
         plain_ml_layered_structured_constrained[inline_idx, vintage_idx] = entry[
             "plain_ml_layered_structured_constrained_binary"
         ].astype(np.float32)
+        if "temporal_probs" in entry:
+            temporal_probability[inline_idx, vintage_idx] = entry["temporal_probs"].astype(np.float32)
+            temporal_uncertainty[inline_idx, vintage_idx] = entry["temporal_uncertainty"].astype(np.float32)
+            temporal_ml_constrained[inline_idx, vintage_idx] = entry["temporal_ml_constrained_binary"].astype(np.float32)
+        if "temporal_leave_one_out_probs" in entry:
+            temporal_leave_one_out_probability[inline_idx, vintage_idx] = entry["temporal_leave_one_out_probs"].astype(
+                np.float32
+            )
+            temporal_leave_one_out_uncertainty[inline_idx, vintage_idx] = entry[
+                "temporal_leave_one_out_uncertainty"
+            ].astype(np.float32)
+            temporal_leave_one_out_constrained[inline_idx, vintage_idx] = entry[
+                "temporal_leave_one_out_binary"
+            ].astype(np.float32)
+        if "wave_temporal_probs" in entry:
+            wave_temporal_probability[inline_idx, vintage_idx] = entry["wave_temporal_probs"].astype(np.float32)
+            wave_temporal_uncertainty[inline_idx, vintage_idx] = entry["wave_temporal_uncertainty"].astype(np.float32)
+            wave_temporal_constrained[inline_idx, vintage_idx] = entry["wave_temporal_constrained_binary"].astype(
+                np.float32
+            )
+            wave_temporal_predicted_residual[inline_idx, vintage_idx] = entry[
+                "wave_temporal_predicted_residual"
+            ].astype(np.float32)
+        if "wave_temporal_leave_one_out_probs" in entry:
+            wave_temporal_heldout_probability[inline_idx, vintage_idx] = entry[
+                "wave_temporal_leave_one_out_probs"
+            ].astype(np.float32)
+            wave_temporal_heldout_uncertainty[inline_idx, vintage_idx] = entry[
+                "wave_temporal_leave_one_out_uncertainty"
+            ].astype(np.float32)
+            wave_temporal_heldout_constrained[inline_idx, vintage_idx] = entry[
+                "wave_temporal_leave_one_out_binary"
+            ].astype(np.float32)
+            wave_temporal_heldout_predicted_residual[inline_idx, vintage_idx] = entry[
+                "wave_temporal_leave_one_out_predicted_residual"
+            ].astype(np.float32)
         hybrid_constrained[inline_idx, vintage_idx] = entry["hybrid_ml_constrained_binary"].astype(np.float32)
         hybrid_structured_constrained[inline_idx, vintage_idx] = entry["hybrid_ml_structured_constrained_binary"].astype(
             np.float32
@@ -159,6 +209,95 @@ def build_volume(config: dict[str, Any]) -> dict[str, Any]:
                 ("inline", "vintage", "sample", "trace"),
                 da.from_array(
                     plain_ml_layered_structured_constrained,
+                    chunks=(inline_chunk, vintage_chunk, sample_chunk, trace_chunk),
+                ),
+            ),
+            "temporal_probability": (
+                ("inline", "vintage", "sample", "trace"),
+                da.from_array(temporal_probability, chunks=(inline_chunk, vintage_chunk, sample_chunk, trace_chunk)),
+            ),
+            "temporal_uncertainty": (
+                ("inline", "vintage", "sample", "trace"),
+                da.from_array(temporal_uncertainty, chunks=(inline_chunk, vintage_chunk, sample_chunk, trace_chunk)),
+            ),
+            "temporal_ml_constrained": (
+                ("inline", "vintage", "sample", "trace"),
+                da.from_array(temporal_ml_constrained, chunks=(inline_chunk, vintage_chunk, sample_chunk, trace_chunk)),
+            ),
+            "temporal_leave_one_out_probability": (
+                ("inline", "vintage", "sample", "trace"),
+                da.from_array(
+                    temporal_leave_one_out_probability,
+                    chunks=(inline_chunk, vintage_chunk, sample_chunk, trace_chunk),
+                ),
+            ),
+            "temporal_leave_one_out_uncertainty": (
+                ("inline", "vintage", "sample", "trace"),
+                da.from_array(
+                    temporal_leave_one_out_uncertainty,
+                    chunks=(inline_chunk, vintage_chunk, sample_chunk, trace_chunk),
+                ),
+            ),
+            "temporal_leave_one_out_constrained": (
+                ("inline", "vintage", "sample", "trace"),
+                da.from_array(
+                    temporal_leave_one_out_constrained,
+                    chunks=(inline_chunk, vintage_chunk, sample_chunk, trace_chunk),
+                ),
+            ),
+            "wave_temporal_probability": (
+                ("inline", "vintage", "sample", "trace"),
+                da.from_array(
+                    wave_temporal_probability,
+                    chunks=(inline_chunk, vintage_chunk, sample_chunk, trace_chunk),
+                ),
+            ),
+            "wave_temporal_uncertainty": (
+                ("inline", "vintage", "sample", "trace"),
+                da.from_array(
+                    wave_temporal_uncertainty,
+                    chunks=(inline_chunk, vintage_chunk, sample_chunk, trace_chunk),
+                ),
+            ),
+            "wave_temporal_constrained": (
+                ("inline", "vintage", "sample", "trace"),
+                da.from_array(
+                    wave_temporal_constrained,
+                    chunks=(inline_chunk, vintage_chunk, sample_chunk, trace_chunk),
+                ),
+            ),
+            "wave_temporal_predicted_residual": (
+                ("inline", "vintage", "sample", "trace"),
+                da.from_array(
+                    wave_temporal_predicted_residual,
+                    chunks=(inline_chunk, vintage_chunk, sample_chunk, trace_chunk),
+                ),
+            ),
+            "wave_temporal_heldout_probability": (
+                ("inline", "vintage", "sample", "trace"),
+                da.from_array(
+                    wave_temporal_heldout_probability,
+                    chunks=(inline_chunk, vintage_chunk, sample_chunk, trace_chunk),
+                ),
+            ),
+            "wave_temporal_heldout_uncertainty": (
+                ("inline", "vintage", "sample", "trace"),
+                da.from_array(
+                    wave_temporal_heldout_uncertainty,
+                    chunks=(inline_chunk, vintage_chunk, sample_chunk, trace_chunk),
+                ),
+            ),
+            "wave_temporal_heldout_constrained": (
+                ("inline", "vintage", "sample", "trace"),
+                da.from_array(
+                    wave_temporal_heldout_constrained,
+                    chunks=(inline_chunk, vintage_chunk, sample_chunk, trace_chunk),
+                ),
+            ),
+            "wave_temporal_heldout_predicted_residual": (
+                ("inline", "vintage", "sample", "trace"),
+                da.from_array(
+                    wave_temporal_heldout_predicted_residual,
                     chunks=(inline_chunk, vintage_chunk, sample_chunk, trace_chunk),
                 ),
             ),
@@ -242,6 +381,10 @@ def build_volume(config: dict[str, Any]) -> dict[str, Any]:
         },
         "variables": list(dataset.data_vars),
         "volume_summary": field_summary.get("volume_summary", {}),
+        "sequence_method_summary": field_summary.get("sequence_method_summary", {}),
+        "leave_one_out_summary": field_summary.get("leave_one_out_summary", {}),
+        "wave_leave_one_out_summary": field_summary.get("wave_leave_one_out_summary", {}),
+        "temporal_volume_consistency": field_summary.get("temporal_volume_consistency", {}),
     }
     manifest_path = Path(config["output_root"]) / "results" / "volume_manifest.json"
     manifest_path.parent.mkdir(parents=True, exist_ok=True)

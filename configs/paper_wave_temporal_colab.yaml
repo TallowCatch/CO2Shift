@@ -1,0 +1,86 @@
+seed: 11
+output_root: runs/paper_wave_temporal_colab
+
+synthetic:
+  benchmark_version: v2
+  num_train: 192
+  num_val: 48
+  num_test: 48
+  num_ood: 48
+  section_shape: [160, 128]
+  num_monitor_vintages: 3
+  geology_families:
+    train: [0, 1, 2]
+    test: [0, 1, 2]
+    ood: [3, 4]
+  scenario_probabilities:
+    plume_growth: 0.55
+    mismatch_only: 0.2
+    no_change: 0.1
+    out_of_zone: 0.15
+  mismatch_probability: 0.85
+  clean_probability: 0.2
+  plume_radius_range: [10, 18]
+  plume_layer_count_range: [2, 4]
+  plume_layer_thickness_range: [2, 5]
+  plume_growth_curve: [0.45, 0.75, 1.0]
+  plume_strength_range: [0.08, 0.24]
+  noise_std_range: [0.01, 0.08]
+  shift_trace_range: [-4, 4]
+  static_shift_range: [-3, 3]
+  wavelet_freq_range: [0.04, 0.12]
+  amplitude_scale_range: [0.85, 1.2]
+  drop_trace_fraction_range: [0.0, 0.1]
+  coherent_noise_scale_range: [0.0, 0.04]
+  overburden_artifact_scale_range: [0.0, 0.06]
+
+training:
+  batch_size: 8
+  epochs: 8
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  mc_dropout_passes: 8
+  device: cuda
+  use_hybrid_augmentation: true
+  use_reservoir_weighting: true
+  outside_reservoir_weight: 0.35
+
+temporal:
+  enabled: false
+
+wave_temporal:
+  enabled: true
+  batch_size: 4
+  epochs: 8
+  learning_rate: 0.00075
+  weight_decay: 0.0001
+  base_channels: 16
+  dropout: 0.1
+  mc_dropout_passes: 6
+  observation_dropout_probability: 0.45
+  max_hidden_vintages: 1
+  reconstruction_loss_weight: 1.0
+  monotone_loss_weight: 0.12
+  adjacency_loss_weight: 0.08
+  crossline_loss_weight: 0.04
+  adjacency_dilation: 5
+  max_time_shift_samples: 3.0
+  heldout_vintages: [0, 1, 2]
+  threshold_quantile: 0.9
+  field_adaptation_steps: 24
+  field_adaptation_learning_rate: 0.00015
+  field_reconstruction_loss_weight: 1.0
+  field_monotone_loss_weight: 0.08
+  field_adjacency_loss_weight: 0.06
+  field_crossline_loss_weight: 0.08
+  field_sparsity_weight: 0.01
+
+evaluation:
+  abstain_quantiles: [0.7, 0.8, 0.9]
+  coverage_quantiles: [0.5, 0.7, 0.8, 0.9, 0.95]
+  threshold_quantile: 0.92
+  scenario_breakdown: true
+  save_figures: true
+
+report:
+  title: "C02Shift temporal monitoring prototype (Colab)"
