@@ -173,9 +173,28 @@ def _resolve_config_path(config: dict[str, Any], value: str) -> str | None:
     path = Path(stripped)
     if path.is_absolute():
         return str(path)
+
     config_path = Path(str(config.get("config_path", "")))
-    base_dir = config_path.parent if config_path.name else Path.cwd()
-    return str((base_dir / path).resolve())
+    candidates: list[Path] = []
+    if config_path.name:
+        base_dir = config_path.parent
+        candidates.append((base_dir / path).resolve())
+        candidates.append((base_dir.parent / path).resolve())
+    candidates.append((Path.cwd() / path).resolve())
+
+    seen: set[str] = set()
+    ordered_candidates: list[Path] = []
+    for candidate in candidates:
+        key = str(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        ordered_candidates.append(candidate)
+
+    for candidate in ordered_candidates:
+        if candidate.exists():
+            return str(candidate)
+    return str(ordered_candidates[0])
 
 
 def _train_per_seed(
