@@ -1,3 +1,5 @@
 Public Sleipner data are converted into an eleven-inline pseudo-3D benchmark for CO2 support mapping.
 Structured support reconstruction improves plain machine learning support volumes on the direct p10 benchmark.
-The harder three-seed synthetic sweep shows that plain machine learning is more stable than the tested hybrid model.
+A three-seed cross-benchmark gate identifies q=0.74 and q=0.75 as reproducible operating points.
+Low-memory field adaptation can collapse occupancy, motivating fixed-artifact no-adaptation transfer checks.
+The harder three-seed synthetic sweep shows plain machine learning is more stable than the tested hybrid model.
