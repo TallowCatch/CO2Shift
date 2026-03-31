@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=pdflatex 2026.2.25)  1 APR 2026 00:42
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=pdflatex 2026.2.25)  1 APR 2026 00:50
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -734,9 +734,7 @@ File: umsb.fd 2013/01/14 v3.01 AMS symbols B
 [5]
 
 [6]
-
-[7]
-<figures/paper_direct_2010_panel.png, id=153, 1727.253pt x 352.9185pt>
+<figures/paper_direct_2010_panel.png, id=145, 1727.253pt x 352.9185pt>
 File: figures/paper_direct_2010_panel.png Graphic file (type png)
 <use figures/paper_direct_2010_panel.png>
 Package pdftex.def Info: figures/paper_direct_2010_panel.png  used on input lin
@@ -744,8 +742,10 @@ e 241.
 (pdftex.def)             Requested size: 390.0pt x 79.68326pt.
 
 
+[7]
+
 [8 <./figures/paper_direct_2010_panel.png>]
-<figures/p07_temporal_panel.png, id=164, 1003.896pt x 342.954pt>
+<figures/p07_temporal_panel.png, id=165, 1003.896pt x 342.954pt>
 File: figures/p07_temporal_panel.png Graphic file (type png)
 <use figures/p07_temporal_panel.png>
 Package pdftex.def Info: figures/p07_temporal_panel.png  used on input line 273
@@ -762,11 +762,9 @@ Underfull \hbox (badness 6493) in paragraph at lines 278--278
 
 [10]
 
-[11]
+[11] (./manuscript.bbl
 
-[12] (./manuscript.bbl
-
-[13]
+[12]
 Underfull \hbox (badness 10000) in paragraph at lines 67--72
 \OT1/cmtt/m/n/12 / / co2datashare . org / dataset / sleipner-[]2019-[]benchmark
 -[]model$[]\OT1/cmr/m/n/12 ,
@@ -774,7 +772,7 @@ Underfull \hbox (badness 10000) in paragraph at lines 67--72
 
 )
 
-[14] (./manuscript.aux)
+[13] (./manuscript.aux)
  ***********
 LaTeX2e <2024-11-01> patch level 2
 L3 programming layer <2025-01-18>
@@ -783,13 +781,13 @@ Package rerunfilecheck Info: File `manuscript.out' has not changed.
 (rerunfilecheck)             Checksum: 0FE314C4184CD878A8601386FA571EDD;3280.
  ) 
 Here is how much of TeX's memory you used:
- 22560 strings out of 474662
- 421920 string characters out of 5751109
- 790588 words of memory out of 5000000
+ 22559 strings out of 474662
+ 421913 string characters out of 5751109
+ 791589 words of memory out of 5000000
  45200 multiletter control sequences out of 15000+600000
  572173 words of font info for 88 fonts, out of 8000000 for 9000
  319 hyphenation exceptions out of 8191
- 84i,11n,91p,2125b,880s stack positions out of 10000i,1000n,20000p,200000b,200000s
+ 84i,11n,91p,1518b,880s stack positions out of 10000i,1000n,20000p,200000b,200000s
 </usr/local/texlive/2025basic/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx1
 0.pfb></usr/local/texlive/2025basic/texmf-dist/fonts/type1/public/amsfonts/cm/c
 mbx12.pfb></usr/local/texlive/2025basic/texmf-dist/fonts/type1/public/amsfonts/
@@ -804,10 +802,10 @@ type1/public/amsfonts/cm/cmsy10.pfb></usr/local/texlive/2025basic/texmf-dist/fo
 nts/type1/public/amsfonts/cm/cmsy8.pfb></usr/local/texlive/2025basic/texmf-dist
 /fonts/type1/public/amsfonts/cm/cmti12.pfb></usr/local/texlive/2025basic/texmf-
 dist/fonts/type1/public/amsfonts/cm/cmtt12.pfb>
-Output written on manuscript.pdf (14 pages, 421404 bytes).
+Output written on manuscript.pdf (13 pages, 421556 bytes).
 PDF statistics:
- 274 PDF objects out of 1000 (max. 8388607)
- 225 compressed objects within 3 object streams
- 52 named destinations out of 1000 (max. 500000)
+ 270 PDF objects out of 1000 (max. 8388607)
+ 222 compressed objects within 3 object streams
+ 51 named destinations out of 1000 (max. 500000)
  175 words of extra memory for PDF output out of 10000 (max. 10000000)
 

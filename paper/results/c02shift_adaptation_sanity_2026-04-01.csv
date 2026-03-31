@@ -1,0 +1,5 @@
+run,benchmark,quantile,adaptation_mode,support_volume_iou,trace_support_iou,outside_support_fraction,crossline_continuity
+dbg_p10_q82_noadapt,p10,0.82,no_adaptation,0.5264963991638951,0.7675233644859814,0.09029828922357075,0.8756669308775378
+dbg_p10_q82_adapt4,p10,0.82,adaptation_steps_4,0.0,0.0,1.0,0.4107142857142857
+dbg_p07_q82_noadapt,p07,0.82,no_adaptation,0.15860737854083565,0.153864168618267,0.7568752535954196,0.871186547107674
+dbg_p07_q82_adapt4,p07,0.82,adaptation_steps_4,0.0,0.0,1.0,NaN
