@@ -121,7 +121,11 @@ def _find_tree_root_with_subdirs(extract_dir: Path, required_subdirs: list[str])
     for candidate in extract_dir.rglob("*"):
         if not candidate.is_dir():
             continue
-        children = {child.name for child in candidate.iterdir() if child.is_dir()}
+        # CO2DataShare benchmark archives are not fully consistent:
+        # some resources expose required entries as directories, while others
+        # (for example plume boundaries L1..L9) expose them as files.
+        # Match on entry names regardless of type.
+        children = {child.name for child in candidate.iterdir()}
         if required.issubset(children):
             return candidate
     raise FileNotFoundError(
