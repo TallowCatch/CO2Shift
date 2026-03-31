@@ -1,0 +1,11 @@
+Gate satisfied at quantiles [0.74, 0.75]. Recommended operating point: q=0.74.
+
+Evidence summary:
+- p10 support-volume IoU is consistently higher than constrained classical across q=0.74 to q=0.80
+  (0.570021 vs 0.345473; margin +0.224548).
+- p07 support-volume IoU meets or exceeds constrained classical only at q=0.74 and q=0.75
+  (+0.024089 and +0.012912 respectively), then falls below classical at q>=0.76.
+
+Interpretation:
+The cross-benchmark operating region is narrow but real. q=0.74 is the primary paper-facing operating point,
+with q=0.75 as a sensitivity check.
