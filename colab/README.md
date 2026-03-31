@@ -14,6 +14,7 @@ This folder is intentionally separate from the main research notebook sequence. 
 
 1. Run the direct `p10` gate first.
 2. Only run the full temporal `p07` benchmark if the direct anchor is competitive.
+3. Run the seed sweep once a viable quantile is identified.
 
 ## What the notebooks do
 
@@ -35,6 +36,12 @@ This folder is intentionally separate from the main research notebook sequence. 
   - runs the `p07` temporal benchmark
   - prints summary paths and sequence metrics
 
+- CLI seed sweep
+  - runs `p10` and `p07` across multiple seeds and quantiles
+  - exports per-run, aggregate, Pareto, and sequence-specific held-out metrics
+  - command:
+    - `PYTHONPATH=src python -m ccs_monitoring.cli field-seed-sweep --config configs/field_seed_sweep_colab.yaml`
+
 The gate and runner notebooks:
 
 - mount Google Drive
@@ -47,6 +54,9 @@ The gate and runner notebooks:
 - `/Users/ameerfiras/Propagation/configs/paper_wave_temporal_colab.yaml`
 - `/Users/ameerfiras/Propagation/configs/sleipner_p10_wave_temporal_colab.yaml`
 - `/Users/ameerfiras/Propagation/configs/sleipner_p07_wave_temporal_colab.yaml`
+- `/Users/ameerfiras/Propagation/configs/sleipner_p10_wave_temporal_colab_lowmem_isolated.yaml`
+- `/Users/ameerfiras/Propagation/configs/sleipner_p07_wave_temporal_colab_lowmem_isolated.yaml`
+- `/Users/ameerfiras/Propagation/configs/field_seed_sweep_colab.yaml`
 
 ## Important note
 

@@ -680,36 +680,51 @@ def adapt_wave_temporal_model_to_field(
         weight_decay=float(wave_cfg.get("weight_decay", 1e-4)),
     )
 
-    features = torch.from_numpy(np.stack([entry["inputs"] for entry in grouped_sequences], axis=0)).to(device=device)
-    residual_targets = torch.from_numpy(
-        np.stack([entry["residual_targets"] for entry in grouped_sequences], axis=0)[:, :, None, :, :]
-    ).to(device=device)
-    reservoir_masks = torch.from_numpy(
-        np.stack([entry["reservoir_mask"] for entry in grouped_sequences], axis=0)[:, None, :, :]
-    ).to(device=device)
+    features = np.stack([entry["inputs"] for entry in grouped_sequences], axis=0).astype(np.float32)
+    residual_targets = np.stack([entry["residual_targets"] for entry in grouped_sequences], axis=0)[:, :, None, :, :].astype(
+        np.float32
+    )
+    reservoir_masks = np.stack([entry["reservoir_mask"] for entry in grouped_sequences], axis=0)[:, None, :, :].astype(
+        np.float32
+    )
+    num_sequences = int(features.shape[0])
+    batch_size = int(wave_cfg.get("field_adaptation_batch_size", 0))
+    if batch_size <= 0:
+        batch_size = num_sequences
+    batch_size = max(1, min(batch_size, num_sequences))
+    rng = np.random.default_rng(seed + 1701)
 
     for _ in range(steps):
-        optimizer.zero_grad(set_to_none=True)
-        outputs = model(features)
-        support_probabilities = torch.sigmoid(outputs["support_logits"])
-        reconstruction_error = F.smooth_l1_loss(outputs["predicted_residual"], residual_targets)
-        monotone_penalty = _monotone_penalty(support_probabilities, reservoir_masks)
-        adjacency_penalty = _adjacency_penalty(
-            support_probabilities,
-            reservoir_masks,
-            int(wave_cfg.get("adjacency_dilation", 5)),
-        )
-        crossline_penalty = _crossline_continuity_penalty(support_probabilities)
-        sparsity_penalty = torch.mean(support_probabilities * reservoir_masks[:, None, :, :, :])
-        loss = (
-            float(wave_cfg.get("field_reconstruction_loss_weight", 1.0)) * reconstruction_error
-            + float(wave_cfg.get("field_monotone_loss_weight", 0.08)) * monotone_penalty
-            + float(wave_cfg.get("field_adjacency_loss_weight", 0.06)) * adjacency_penalty
-            + float(wave_cfg.get("field_crossline_loss_weight", 0.08)) * crossline_penalty
-            + float(wave_cfg.get("field_sparsity_weight", 0.01)) * sparsity_penalty
-        )
-        loss.backward()
-        optimizer.step()
+        order = rng.permutation(num_sequences)
+        for start in range(0, num_sequences, batch_size):
+            selection = order[start : start + batch_size]
+            batch_features = torch.from_numpy(features[selection]).to(device=device)
+            batch_residual_targets = torch.from_numpy(residual_targets[selection]).to(device=device)
+            batch_reservoir_masks = torch.from_numpy(reservoir_masks[selection]).to(device=device)
+
+            optimizer.zero_grad(set_to_none=True)
+            outputs = model(batch_features)
+            support_probabilities = torch.sigmoid(outputs["support_logits"])
+            reconstruction_error = F.smooth_l1_loss(outputs["predicted_residual"], batch_residual_targets)
+            monotone_penalty = _monotone_penalty(support_probabilities, batch_reservoir_masks)
+            adjacency_penalty = _adjacency_penalty(
+                support_probabilities,
+                batch_reservoir_masks,
+                int(wave_cfg.get("adjacency_dilation", 5)),
+            )
+            crossline_penalty = _crossline_continuity_penalty(support_probabilities)
+            sparsity_penalty = torch.mean(support_probabilities * batch_reservoir_masks[:, None, :, :, :])
+            loss = (
+                float(wave_cfg.get("field_reconstruction_loss_weight", 1.0)) * reconstruction_error
+                + float(wave_cfg.get("field_monotone_loss_weight", 0.08)) * monotone_penalty
+                + float(wave_cfg.get("field_adjacency_loss_weight", 0.06)) * adjacency_penalty
+                + float(wave_cfg.get("field_crossline_loss_weight", 0.08)) * crossline_penalty
+                + float(wave_cfg.get("field_sparsity_weight", 0.01)) * sparsity_penalty
+            )
+            loss.backward()
+            optimizer.step()
 
     adapted_artifact["model"] = model.cpu()
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
     return adapted_artifact

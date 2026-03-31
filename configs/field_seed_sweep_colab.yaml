@@ -1,0 +1,35 @@
+seed: 11
+output_root: runs/field_seed_sweep_colab
+
+field_seed_sweep:
+  enabled: true
+  output_root: runs/field_seed_sweep_colab
+  train_config_path: configs/paper_wave_temporal_colab.yaml
+  field_config_paths:
+    p10: configs/sleipner_p10_wave_temporal_colab.yaml
+    p07: configs/sleipner_p07_wave_temporal_colab.yaml
+  seeds: [11, 12, 13]
+  probability_quantiles: [0.82, 0.78]
+  run_training_per_seed: true
+  method_name: wave_temporal_constrained
+  classical_method_name: best_classical_constrained
+  structured_method_name: plain_ml_structured_constrained
+  continue_on_error: true
+  bootstrap_samples: 2000
+  bootstrap_alpha: 0.05
+  bootstrap_seed: 20260331
+  low_memory:
+    enabled: true
+    device: cuda
+    mc_dropout_passes: 4
+    field_adaptation_steps: 4
+    field_adaptation_batch_size: 1
+    field_adaptation_learning_rate: 0.00015
+    field_reconstruction_loss_weight: 1.0
+    field_monotone_loss_weight: 0.04
+    field_adjacency_loss_weight: 0.03
+    field_crossline_loss_weight: 0.04
+    field_sparsity_weight: 0.002
+
+report:
+  title: "C02Shift field seed sweep (Colab)"

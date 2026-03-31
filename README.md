@@ -103,6 +103,7 @@ PYTHONPATH=.vendor:src python3 -m ccs_monitoring.cli build-sleipner-mask --confi
 PYTHONPATH=.vendor:src python3 -m ccs_monitoring.cli build-sleipner-plume-support --config configs/sleipner_manifest.yaml
 PYTHONPATH=.vendor:src python3 -m ccs_monitoring.cli build-sleipner-support-volume --config configs/sleipner_manifest.yaml
 PYTHONPATH=src python3 -m ccs_monitoring.cli build-paper-evidence --config configs/paper_evidence.yaml
+PYTHONPATH=src python3 -m ccs_monitoring.cli field-seed-sweep --config configs/field_seed_sweep_colab.yaml
 PYTHONPATH=src python3 -m ccs_monitoring.cli build-volume --config configs/sleipner_volume.yaml
 PYTHONPATH=src python3 -m ccs_monitoring.cli render-4d --config configs/sleipner_volume.yaml
 PYTHONPATH=src python3 -m ccs_monitoring.cli benchmark-jax --config configs/jax_wave_lab.yaml
@@ -125,6 +126,7 @@ The first paper scope intentionally stays narrower than direct `Q` inversion.
 ## New next-phase configs
 
 - [`configs/paper_evidence.yaml`](/Users/ameerfiras/Propagation/configs/paper_evidence.yaml): builds the paper-facing tables, ablations, and final direct-2010 panel
+- [`configs/field_seed_sweep_colab.yaml`](/Users/ameerfiras/Propagation/configs/field_seed_sweep_colab.yaml): runs p10 and p07 multi-seed quantile sweeps with held-out sequence metrics and Pareto summaries
 - [`configs/sleipner_volume.yaml`](/Users/ameerfiras/Propagation/configs/sleipner_volume.yaml): builds a stacked field volume and renders 4D-style HTML/GIF outputs
 - [`configs/jax_wave_lab.yaml`](/Users/ameerfiras/Propagation/configs/jax_wave_lab.yaml): runs the CPU JAX sidecar benchmark
 
@@ -145,6 +147,10 @@ Additional next-phase outputs:
 - `runs/paper_evidence/results/paper_evidence_summary.json`
 - `runs/paper_evidence/results/paper_ablation_table.csv`
 - `runs/paper_evidence/results/figures/paper_direct_2010_panel.png`
+- `runs/field_seed_sweep_colab/results/field_seed_sweep_per_run.csv`
+- `runs/field_seed_sweep_colab/results/field_seed_sweep_aggregate.csv`
+- `runs/field_seed_sweep_colab/results/field_seed_sweep_pareto.csv`
+- `runs/field_seed_sweep_colab/results/field_seed_sweep_report.md`
 - `runs/sleipner_volume/volume.zarr`
 - `runs/sleipner_volume/results/volume_manifest.json`
 - `runs/sleipner_volume/results/visualization/slice_browser.html`
