@@ -214,6 +214,9 @@ def _build_field_rows(volume_summary: dict[str, Any]) -> list[dict[str, Any]]:
                     "crossline_continuity": float(metrics.get("crossline_continuity", float("nan"))),
                     "predicted_trace_fraction": float(metrics.get("predicted_trace_fraction", float("nan"))),
                     "predicted_fraction": float(metrics.get("predicted_fraction", float("nan"))),
+                    "predicted_fraction_outside_support_volume": float(
+                        metrics.get("predicted_fraction_outside_support_volume", float("nan"))
+                    ),
                 }
             )
     for method_name in methods:
@@ -231,6 +234,9 @@ def _build_field_rows(volume_summary: dict[str, Any]) -> list[dict[str, Any]]:
                 "crossline_continuity": float(metrics.get("crossline_continuity", float("nan"))),
                 "predicted_trace_fraction": float(metrics.get("predicted_trace_fraction", float("nan"))),
                 "predicted_fraction": float(metrics.get("predicted_fraction", float("nan"))),
+                "predicted_fraction_outside_support_volume": float(
+                    metrics.get("predicted_fraction_outside_support_volume", float("nan"))
+                ),
             }
         )
     return rows

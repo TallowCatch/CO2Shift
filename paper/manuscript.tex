@@ -30,7 +30,7 @@
 \ifuseelsarticle
 \begin{frontmatter}
 
-\title{Structured support mapping on a public pseudo-3D Sleipner benchmark for time-lapse CO$_2$ monitoring}
+\title{An open pseudo-3D Sleipner benchmark and operating protocol for time-lapse CO$_2$ support mapping}
 
 \author{Ameer Alhashemi}
 \address{University of Birmingham, Birmingham, United Kingdom}
@@ -45,7 +45,7 @@ CO$_2$ storage monitoring \sep time-lapse seismic \sep Sleipner \sep pseudo-3D b
 
 \end{frontmatter}
 \else
-\title{Structured support mapping on a public pseudo-3D Sleipner benchmark for time-lapse CO$_2$ monitoring}
+\title{An open pseudo-3D Sleipner benchmark and operating protocol for time-lapse CO$_2$ support mapping}
 \author{Ameer Alhashemi\\University of Birmingham, Birmingham, United Kingdom}
 \date{}
 \maketitle
@@ -63,9 +63,9 @@ Time-lapse seismic data have played a central role in monitoring the Sleipner CO
 
 At the same time, Sleipner is a difficult testbed. Repeated surveys are affected by non-repeatability, processing changes, tuning effects, and uncertainty in how seismic response relates to plume geometry \citep{rickett2001crossequalization,alali2020crossequalization,romero2023joint}. Recent work has shown that physics-based inversion and segmentation constraints can improve field interpretation, but the workflow remains demanding and the final field products still depend on strong structural information \citep{romero2023joint,fachtony2025sleipner}. Machine learning studies have also shown promise, including prior work on Sleipner interpretation and site-specific field transfer at other storage sites \citep{li2021sleipnernn,leong2024seisco2net}. However, there is still a gap between simplified synthetic demonstrations and open, field-facing, reproducible pseudo-3D evaluation on public CO$_2$ monitoring data.
 
-This paper addresses that gap with two linked contributions. First, it constructs a public pseudo-3D Sleipner benchmark from eleven neighboring inlines while keeping the 2007 and 2010 processing families separate, and defines benchmark-constrained support mapping from per-section predictions to pseudo-3D support volumes. Second, it introduces an operating-point selection protocol for cross-benchmark field deployment using three-seed quantile sweeps and explicit gate criteria against constrained classical baselines.
+This paper addresses that gap with three linked contributions. First, it constructs an open pseudo-3D Sleipner benchmark from eleven neighboring inlines while keeping the 2007 and 2010 processing families separate, thereby creating a transparent multi-inline testbed for public field evaluation. Second, it defines benchmark-constrained structured support mapping from per-section predictions to pseudo-3D support volumes, so that section-level outputs can be assessed as coherent monitoring products rather than as isolated slices. Third, it introduces an operating-point selection protocol for cross-benchmark field deployment using three-seed quantile sweeps, explicit gate criteria against constrained classical baselines, and adaptation sanity checks.
 
-The central research question is whether benchmark-constrained pseudo-3D support mapping on public Sleipner data can improve on constrained classical baselines while preserving lateral support, and whether that improvement can be made reproducible through an explicit operating protocol. On the present benchmark, the clearest baseline gain is obtained with structured support reconstruction built on plain machine learning, while the new operating protocol defines where wave-temporal deployment is reliable across both p10 and p07. The synthetic and field evaluations place the hybrid model in a secondary role.
+The central research question is whether benchmark-constrained pseudo-3D support mapping on public Sleipner data can improve on constrained classical baselines while preserving lateral support, and whether that improvement can be made reproducible through an explicit operating protocol. On the present benchmark, the clearest baseline gain is obtained with structured support reconstruction built on plain machine learning, while the new operating protocol defines where wave-temporal deployment is reliable across both p10 and p07. The synthetic and field evaluations place the hybrid model in a secondary role, so the contribution should be read primarily as a benchmark, support-mapping, and deployment-protocol study.
 
 \section{Public data and benchmark construction}
 
@@ -313,7 +313,7 @@ The negative-control synthetic scenarios also reinforce this point. On mismatch-
 
 \section{Discussion}
 
-The main result is that benchmark-constrained structured support reconstruction adds value when the underlying section-level learner is stable. On the direct eleven-inline benchmark, it improves support-volume overlap relative to constrained plain machine learning while preserving the lateral support footprint. On the temporal benchmark, it improves support-volume agreement and crossline continuity simultaneously. This matters for CCS monitoring because a method that improves section-level overlap while producing spatially inconsistent support bodies is unlikely to be useful in practice.
+The main result is that benchmark-constrained structured support reconstruction adds value when the underlying section-level learner is stable. On the direct eleven-inline benchmark, it improves support-volume overlap relative to constrained plain machine learning while preserving the lateral support footprint. On the temporal benchmark, it improves support-volume agreement and crossline continuity simultaneously. This matters for CCS monitoring because a method that improves section-level overlap while producing spatially inconsistent support bodies is unlikely to be useful in practice. In that sense, the paper's novelty lies less in proposing a new learner than in showing how open public products can be assembled into a pseudo-3D benchmark where support mapping and deployment decisions are evaluated explicitly.
 
 A second main result is methodological: explicit operating-point selection materially changes the field conclusion for wave-temporal deployment. With fixed artifacts and no adaptation, p10 remains above constrained classical across the tested quantiles, while p07 crosses the classical baseline only in a narrow region (0.74 and 0.75). This produces a reproducible gate decision rather than a one-off threshold claim.
 
@@ -325,7 +325,7 @@ These findings also have a practical implication for CCS monitoring. Open field 
 
 \section{Conclusions}
 
-This paper introduced a public pseudo-3D benchmark for time-lapse CO$_2$ monitoring at Sleipner using eleven neighboring inlines, public benchmark constraints, and separate temporal and direct evaluation settings. The benchmark was used to compare constrained classical baselines, plain machine learning, hybrid machine learning, and deterministic support reconstruction stages.
+This paper introduced an open pseudo-3D benchmark and operating protocol for time-lapse CO$_2$ support mapping at Sleipner using eleven neighboring inlines, public benchmark constraints, and separate temporal and direct evaluation settings. The benchmark was used to compare constrained classical baselines, plain machine learning, hybrid machine learning, and deterministic support reconstruction stages.
 
 The main findings are straightforward. Plain machine learning is more stable than the hybrid model on the harder three-seed synthetic benchmark. Structured support reconstruction improves the plain machine learning field result on both the direct and temporal pseudo-3D benchmarks. The layer-aware extension does not improve the benchmark. A fixed-artifact cross-benchmark gate study further shows that wave-temporal deployment passes both p10 and p07 constrained-classical conditions only at quantiles 0.74 and 0.75, with 0.74 as the primary operating point, and that low-memory adaptation can collapse the field output if left unchecked. The strongest conclusion supported by the present results is therefore twofold: benchmark-constrained structured support mapping is a strong open baseline, and explicit operating-point protocols are necessary for reproducible field transfer claims.
 

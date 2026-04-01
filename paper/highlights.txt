@@ -1,5 +1,5 @@
-Public Sleipner data are converted into an eleven-inline pseudo-3D benchmark for CO2 support mapping.
-Structured support reconstruction improves plain machine learning support volumes on the direct p10 benchmark.
-A three-seed cross-benchmark gate identifies q=0.74 and q=0.75 as reproducible operating points.
+Public Sleipner products are assembled into an open eleven-inline pseudo-3D benchmark for CO2 support mapping.
+Benchmark-constrained structured support reconstruction improves plain machine learning support volumes on the direct p10 benchmark.
+A three-seed cross-benchmark gate identifies q=0.74 and q=0.75 as reproducible operating points for wave-temporal transfer.
 Low-memory field adaptation can collapse occupancy, motivating fixed-artifact no-adaptation transfer checks.
 The harder three-seed synthetic sweep shows plain machine learning is more stable than the tested hybrid model.
