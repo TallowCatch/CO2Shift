@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import json
 import math
+import shutil
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -23,15 +24,18 @@ def build_paper_evidence(config: dict[str, Any]) -> dict[str, Any]:
     results_dir = output_root / "results"
     figures_dir = results_dir / "figures"
     paper_results_dir = Path(config["paper_evidence"].get("paper_results_dir", "paper/results"))
+    paper_figures_dir = paper_results_dir.parent / "figures"
     results_dir.mkdir(parents=True, exist_ok=True)
     figures_dir.mkdir(parents=True, exist_ok=True)
     paper_results_dir.mkdir(parents=True, exist_ok=True)
+    paper_figures_dir.mkdir(parents=True, exist_ok=True)
 
     paper_cfg = config["paper_evidence"]
     synthetic_metrics = _load_json(paper_cfg["synthetic_metrics_path"])
     seed_sweep_summary = _load_optional_json(paper_cfg.get("seed_sweep_summary_path", ""))
     field_summary_payload = _load_json(paper_cfg["field_summary_path"])
     direct_summary_payload = _load_json(paper_cfg["direct_summary_path"])
+    field_config = load_config(paper_cfg["field_config_path"])
     direct_config = load_config(paper_cfg["direct_config_path"])
     field_volume_summary = _extract_volume_summary(field_summary_payload)
     direct_volume_summary = _extract_volume_summary(direct_summary_payload)
@@ -42,8 +46,12 @@ def build_paper_evidence(config: dict[str, Any]) -> dict[str, Any]:
     direct_rows = _build_direct_rows(direct_volume_summary)
     ablation_rows = _build_ablation_rows(field_volume_summary, direct_volume_summary)
     field_stability_rows, field_stability_aggregate_rows = _build_field_stability_rows(paper_cfg, output_root)
-    panel_path = figures_dir / "paper_direct_2010_panel.png"
-    _build_direct_panel(direct_config, direct_volume_summary, panel_path)
+    direct_panel_path = figures_dir / "paper_direct_2010_panel.png"
+    temporal_panel_path = figures_dir / "p07_temporal_panel.png"
+    _build_direct_panel(direct_config, direct_volume_summary, direct_panel_path)
+    _build_temporal_panel(field_config, field_volume_summary, temporal_panel_path)
+    shutil.copyfile(direct_panel_path, paper_figures_dir / direct_panel_path.name)
+    shutil.copyfile(temporal_panel_path, paper_figures_dir / temporal_panel_path.name)
 
     evidence_summary = {
         "claim": paper_cfg["claim"],
@@ -89,7 +97,8 @@ def build_paper_evidence(config: dict[str, Any]) -> dict[str, Any]:
             direct_volume_summary,
             field_stability_aggregate_rows,
         ),
-        "panel_path": str(panel_path),
+        "panel_path": str(direct_panel_path),
+        "temporal_panel_path": str(temporal_panel_path),
     }
 
     _write_json(results_dir / "paper_evidence_summary.json", evidence_summary)
@@ -222,6 +231,7 @@ def _build_field_rows(volume_summary: dict[str, Any]) -> list[dict[str, Any]]:
         "best_classical_constrained",
         "plain_ml_constrained",
         "plain_ml_structured_constrained",
+        "plain_ml_temporal_structured_constrained",
         "plain_ml_layered_structured_constrained",
         "hybrid_ml_constrained",
         "hybrid_ml_structured_constrained",
@@ -276,6 +286,7 @@ def _build_direct_rows(volume_summary: dict[str, Any]) -> list[dict[str, Any]]:
         "best_classical_constrained",
         "plain_ml_constrained",
         "plain_ml_structured_constrained",
+        "plain_ml_temporal_structured_constrained",
         "plain_ml_layered_structured_constrained",
         "hybrid_ml_constrained",
         "hybrid_ml_structured_constrained",
@@ -306,6 +317,7 @@ def _build_ablation_rows(field_volume_summary: dict[str, Any], direct_volume_sum
             "best_classical_constrained",
             "plain_ml_constrained",
             "plain_ml_structured_constrained",
+            "plain_ml_temporal_structured_constrained",
             "plain_ml_layered_structured_constrained",
             "hybrid_ml_constrained",
             "hybrid_ml_structured_constrained",
@@ -347,8 +359,8 @@ def _build_direct_panel(config: dict[str, Any], volume_summary: dict[str, Any], 
         dataset["plain_ml_structured_constrained"].isel(inline=inline_index, vintage=-1).values,
         dtype=np.float32,
     )
-    layered_structured_image = np.asarray(
-        dataset["plain_ml_layered_structured_constrained"].isel(inline=inline_index, vintage=-1).values,
+    temporal_structured_image = np.asarray(
+        dataset["plain_ml_temporal_structured_constrained"].isel(inline=inline_index, vintage=-1).values,
         dtype=np.float32,
     )
     titles = [
@@ -359,16 +371,53 @@ def _build_direct_panel(config: dict[str, Any], volume_summary: dict[str, Any], 
             f"({volume_summary['overall']['plain_ml_structured_constrained']['support_volume_iou_2010']:.3f})"
         ),
         (
-            "D. Plain ML + layered structured support "
-            f"({volume_summary['overall']['plain_ml_layered_structured_constrained']['support_volume_iou_2010']:.3f})"
+            "D. Plain ML + temporal structured support "
+            f"({volume_summary['overall']['plain_ml_temporal_structured_constrained']['support_volume_iou_2010']:.3f})"
         ),
         "E. Benchmark support",
     ]
-    images = [classical_image, plain_image, structured_image, layered_structured_image, benchmark_image]
+    images = [classical_image, plain_image, structured_image, temporal_structured_image, benchmark_image]
     fig, axes = plt.subplots(1, 5, figsize=(24, 5))
     for axis, image, title in zip(axes, images, titles):
         axis.imshow(image, cmap="magma", aspect="auto", vmin=0.0, vmax=1.0)
         axis.set_title(title)
+        axis.axis("off")
+    fig.tight_layout()
+    fig.savefig(destination, dpi=180, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _build_temporal_panel(config: dict[str, Any], volume_summary: dict[str, Any], destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    store_path = Path(config["volume"].get("output_store") or (Path(config["output_root"]) / "volume.zarr"))
+    dataset = xr.open_zarr(store_path)
+    inline_values = [str(value) for value in dataset.coords["inline"].values.tolist()]
+    inline_index = inline_values.index("1840") if "1840" in inline_values else len(inline_values) // 2
+    benchmark_image = np.asarray(dataset["support_volume_2010"].isel(inline=inline_index).values, dtype=np.float32)
+    prediction_volume = np.asarray(
+        dataset["plain_ml_temporal_structured_constrained"].isel(inline=inline_index).values,
+        dtype=np.float32,
+    )
+    vintage_values = [str(value) for value in dataset.coords["vintage"].values.tolist()]
+    figure_vintages = [vintage for vintage in ("2001", "2004", "2006") if vintage in vintage_values]
+    if not figure_vintages:
+        figure_vintages = vintage_values
+    fig, axes = plt.subplots(1, len(figure_vintages), figsize=(5.5 * len(figure_vintages), 4.8))
+    if not isinstance(axes, np.ndarray):
+        axes = np.asarray([axes], dtype=object)
+    for axis, vintage_label in zip(axes, figure_vintages):
+        vintage_index = vintage_values.index(vintage_label)
+        image = prediction_volume[vintage_index]
+        vintage_metrics = volume_summary.get("by_vintage", {}).get(vintage_label, {}).get(
+            "plain_ml_temporal_structured_constrained",
+            {},
+        )
+        axis.imshow(image, cmap="magma", aspect="auto", vmin=0.0, vmax=1.0)
+        axis.contour(benchmark_image, levels=[0.5], colors="white", linewidths=0.8)
+        axis.set_title(
+            f"{vintage_label} (SV {float(vintage_metrics.get('support_volume_iou_2010', float('nan'))):.3f}, "
+            f"Trace {float(vintage_metrics.get('trace_iou_with_2010_support', float('nan'))):.3f})"
+        )
         axis.axis("off")
     fig.tight_layout()
     fig.savefig(destination, dpi=180, bbox_inches="tight")
@@ -482,17 +531,19 @@ def _build_methods_results_block(
     test_hybrid = aggregate_lookup.get(("test", "hybrid_ml"))
     p07_plain = field_volume_summary["overall"]["plain_ml_constrained"]
     p07_structured = field_volume_summary["overall"]["plain_ml_structured_constrained"]
-    p07_layered = field_volume_summary["overall"]["plain_ml_layered_structured_constrained"]
+    p07_temporal_structured = field_volume_summary["overall"]["plain_ml_temporal_structured_constrained"]
     p10_plain = direct_volume_summary["overall"]["plain_ml_constrained"]
     p10_structured = direct_volume_summary["overall"]["plain_ml_structured_constrained"]
-    p10_layered = direct_volume_summary["overall"]["plain_ml_layered_structured_constrained"]
+    p10_temporal_structured = direct_volume_summary["overall"]["plain_ml_temporal_structured_constrained"]
     p10_classical = direct_volume_summary["overall"]["best_classical_constrained"]
     p10_hybrid = direct_volume_summary["overall"]["hybrid_ml_constrained"]
     stability_lookup = {
         (str(row["benchmark"]), str(row["method"])): row for row in field_stability_aggregate_rows
     }
     p07_structured_stability = stability_lookup.get(("p07", "plain_ml_structured_constrained"))
+    p07_temporal_structured_stability = stability_lookup.get(("p07", "plain_ml_temporal_structured_constrained"))
     p10_structured_stability = stability_lookup.get(("p10", "plain_ml_structured_constrained"))
+    p10_temporal_structured_stability = stability_lookup.get(("p10", "plain_ml_temporal_structured_constrained"))
     p07_plain_stability = stability_lookup.get(("p07", "plain_ml_constrained"))
     p10_plain_stability = stability_lookup.get(("p10", "plain_ml_constrained"))
     if ood_plain and ood_hybrid and test_plain and test_hybrid:
@@ -516,49 +567,53 @@ def _build_methods_results_block(
     stability_text = ""
     if (
         p07_structured_stability
+        and p07_temporal_structured_stability
         and p10_structured_stability
+        and p10_temporal_structured_stability
         and p07_plain_stability
         and p10_plain_stability
     ):
         stability_text = (
-            "Across the reused three-seed field evaluation, structured plain ML remains the strongest support-"
-            f"mapping variant on p10 with support-volume IoU {p10_structured_stability['support_volume_iou_2010_mean']:.3f} "
-            f"± {p10_structured_stability['support_volume_iou_2010_std']:.3f}, compared with "
+            "Across the reused three-seed field evaluation, temporal structured plain ML becomes the strongest "
+            f"support-mapping variant on p10 with support-volume IoU {p10_temporal_structured_stability['support_volume_iou_2010_mean']:.3f} "
+            f"± {p10_temporal_structured_stability['support_volume_iou_2010_std']:.3f}, compared with "
+            f"{p10_structured_stability['support_volume_iou_2010_mean']:.3f} ± {p10_structured_stability['support_volume_iou_2010_std']:.3f} "
+            "for the non-temporal structured baseline and "
             f"{p10_plain_stability['support_volume_iou_2010_mean']:.3f} ± {p10_plain_stability['support_volume_iou_2010_std']:.3f} "
             "for plain ML alone. On p07, structured plain ML remains stronger than plain ML on support-volume IoU "
             f"({p07_structured_stability['support_volume_iou_2010_mean']:.3f} ± {p07_structured_stability['support_volume_iou_2010_std']:.3f} "
             f"versus {p07_plain_stability['support_volume_iou_2010_mean']:.3f} ± {p07_plain_stability['support_volume_iou_2010_std']:.3f}), "
-            "while the benchmark-constrained classical baseline still retains the highest raw p07 support-volume IoU. "
-            "This stability check therefore supports a benchmark/protocol claim rather than a blanket classical-beating claim."
+            "and the temporal structured extension improves it further to "
+            f"{p07_temporal_structured_stability['support_volume_iou_2010_mean']:.3f} ± {p07_temporal_structured_stability['support_volume_iou_2010_std']:.3f}. "
+            "This stability check therefore supports a method claim rather than only a benchmark/protocol claim."
         )
     return (
         f"Claim: {claim}\n\n"
         "Methods: We keep the 2D PyTorch models and classical baselines, but the main field-facing result now "
-        "centers on plain ML plus structured support reconstruction rather than the hybrid model. We evaluate both "
-        "the original structured reconstruction and a new layered structured variant that uses benchmark-informed "
-        "reservoir bands as a deterministic pseudo-3D refinement stage. Field outputs are benchmark-constrained "
-        "using the public Sleipner storage interval, and the 3D evidence is reported on 11-inline pseudo-3D p07 "
-        "and p10 benchmarks.\n\n"
+        "centers on plain ML plus benchmark-constrained temporal structured support inference rather than the "
+        "hybrid model. We evaluate the original structured reconstruction, the new temporal structured extension, "
+        "and a layered structured negative control. Field outputs are benchmark-constrained using the public "
+        "Sleipner storage interval, and the pseudo-3D evidence is reported on 11-inline p07 and p10 benchmarks.\n\n"
         f"Results: {synthetic_text} "
         f"On the 11-inline p07 temporal benchmark, structured plain ML improves support-volume IoU from "
         f"{p07_plain['support_volume_iou_2010']:.3f} to {p07_structured['support_volume_iou_2010']:.3f}, and the "
-        f"layered variant drops it to {p07_layered['support_volume_iou_2010']:.3f}. Trace-support IoU "
-        f"moves from {p07_plain['trace_iou_with_2010_support']:.3f} to {p07_structured['trace_iou_with_2010_support']:.3f} "
-        f"and then down to {p07_layered['trace_iou_with_2010_support']:.3f}, while crossline continuity moves from "
-        f"{p07_plain['crossline_continuity']:.3f} to {p07_structured['crossline_continuity']:.3f} to "
-        f"{p07_layered['crossline_continuity']:.3f}. "
+        f"temporal structured extension improves it further to {p07_temporal_structured['support_volume_iou_2010']:.3f}. "
+        f"Trace-support IoU moves from {p07_plain['trace_iou_with_2010_support']:.3f} to "
+        f"{p07_structured['trace_iou_with_2010_support']:.3f} to {p07_temporal_structured['trace_iou_with_2010_support']:.3f}, "
+        f"while crossline continuity moves from {p07_plain['crossline_continuity']:.3f} to "
+        f"{p07_structured['crossline_continuity']:.3f} to {p07_temporal_structured['crossline_continuity']:.3f}. "
         f"On the direct 11-inline p10 benchmark, structured plain ML improves support-volume IoU from "
         f"{p10_plain['support_volume_iou_2010']:.3f} to {p10_structured['support_volume_iou_2010']:.3f}, and the "
-        f"layered variant drops it to {p10_layered['support_volume_iou_2010']:.3f}. Lateral support alignment "
-        f"moves from {p10_plain['trace_iou_with_2010_support']:.3f} to {p10_structured['trace_iou_with_2010_support']:.3f} "
-        f"and then down to {p10_layered['trace_iou_with_2010_support']:.3f}, and the best constrained classical baseline reaches "
+        f"temporal structured extension improves it further to {p10_temporal_structured['support_volume_iou_2010']:.3f}. "
+        f"Lateral support alignment moves from {p10_plain['trace_iou_with_2010_support']:.3f} to "
+        f"{p10_structured['trace_iou_with_2010_support']:.3f} to {p10_temporal_structured['trace_iou_with_2010_support']:.3f}, "
+        f"and the best constrained classical baseline reaches "
         f"{p10_classical['support_volume_iou_2010']:.3f} support-volume IoU. "
         f"The hybrid field outputs remain weaker on the direct benchmark "
         f"({p10_hybrid['support_volume_iou_2010']:.3f} support-volume IoU), so the current defensible field claim "
-        "should center on plain ML plus structured support reconstruction. "
+        "should center on temporal structured support inference. "
         f"{stability_text} "
-        "The layered extension is therefore a "
-        "tested negative result, not the current field method of record."
+        "The layered extension remains a tested negative result rather than the field method of record."
     )
 
 

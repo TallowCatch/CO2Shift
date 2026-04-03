@@ -552,6 +552,71 @@ def _trace_support_majority(
     return (trace_support.astype(bool) | majority).astype(bool)
 
 
+def _temporal_trace_support_majority(
+    trace_support: np.ndarray,
+    *,
+    window_size: int,
+    vote_fraction: float,
+) -> np.ndarray:
+    if trace_support.ndim != 3 or trace_support.shape[0] <= 1 or window_size <= 1:
+        return trace_support.astype(bool)
+
+    half_window = window_size // 2
+    majority = np.zeros_like(trace_support, dtype=bool)
+    for vintage_index in range(trace_support.shape[0]):
+        lower = max(0, vintage_index - half_window)
+        upper = min(trace_support.shape[0], vintage_index + half_window + 1)
+        vote_share = np.mean(trace_support[lower:upper].astype(np.float32), axis=0)
+        majority[vintage_index] = vote_share >= vote_fraction
+    return (trace_support.astype(bool) | majority).astype(bool)
+
+
+def _cleanup_field_hypervolume(
+    binary_hypervolume: np.ndarray,
+    reservoir_hypervolume: np.ndarray | None,
+    temporal_cfg: dict[str, Any],
+) -> tuple[np.ndarray, dict[str, Any]]:
+    binary = binary_hypervolume.astype(bool, copy=True)
+    if reservoir_hypervolume is not None:
+        binary &= reservoir_hypervolume > 0.5
+
+    structure = np.ones((3, 3, 3, 3), dtype=bool)
+    closing_iterations = int(temporal_cfg.get("hypervolume_closing_iterations", 0))
+    if closing_iterations > 0:
+        binary = ndimage.binary_closing(binary, structure=structure, iterations=closing_iterations)
+
+    opening_iterations = int(temporal_cfg.get("hypervolume_opening_iterations", 0))
+    if opening_iterations > 0:
+        binary = ndimage.binary_opening(binary, structure=structure, iterations=opening_iterations)
+
+    keep_largest_components = int(temporal_cfg.get("hypervolume_keep_largest_components", 0))
+    min_component_size = int(temporal_cfg.get("hypervolume_min_component_size", 0))
+    min_component_fraction = float(temporal_cfg.get("hypervolume_min_component_fraction", 0.0))
+    min_size_from_fraction = int(np.ceil(binary.size * min_component_fraction))
+    component_size_floor = max(min_component_size, min_size_from_fraction)
+
+    labels, num_labels = ndimage.label(binary, structure=structure)
+    num_components_kept = 0
+    if num_labels > 0:
+        component_sizes = ndimage.sum(binary, labels, index=np.arange(1, num_labels + 1))
+        label_sizes = [(label_id + 1, int(size)) for label_id, size in enumerate(component_sizes)]
+        label_sizes = [entry for entry in label_sizes if entry[1] >= component_size_floor]
+        label_sizes.sort(key=lambda item: item[1], reverse=True)
+        if keep_largest_components > 0:
+            label_sizes = label_sizes[:keep_largest_components]
+        keep_labels = {label_id for label_id, _size in label_sizes}
+        binary = np.isin(labels, list(keep_labels))
+        num_components_kept = len(keep_labels)
+
+    metadata = {
+        "hypervolume_closing_iterations": int(closing_iterations),
+        "hypervolume_opening_iterations": int(opening_iterations),
+        "hypervolume_component_size_floor": int(component_size_floor),
+        "hypervolume_num_components_kept": int(num_components_kept),
+    }
+    return binary.astype(bool), metadata
+
+
 def _reconstruct_support_column(
     probabilities: np.ndarray,
     seed_binary: np.ndarray,
@@ -891,6 +956,229 @@ def _apply_structured_support_reconstruction(
     return results
 
 
+def _apply_temporal_structured_support_inference(
+    outputs: list[dict[str, Any]],
+    config: dict[str, Any],
+    *,
+    method_prefix: str,
+    seed_results: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    temporal_cfg = config.get("field", {}).get("temporal_structured_support", {})
+    if not temporal_cfg.get("enabled", False):
+        return {}
+
+    structured_cfg = config.get("field", {}).get("structured_support", {})
+    vintage_groups = _group_output_indices(outputs, "vintage")
+    if not vintage_groups:
+        return {}
+
+    ordered_vintages = sorted(vintage_groups.keys(), key=_sort_metadata_label)
+    inline_ids = sorted(
+        {
+            _field_group_key(output["pair"], "inline_id", output["pair"].name)
+            for output in outputs
+        },
+        key=_sort_metadata_label,
+    )
+    if not ordered_vintages or not inline_ids:
+        return {}
+
+    probability_key = f"{method_prefix}_probs"
+    uncertainty_key = f"{method_prefix}_uncertainty"
+    constrained_seed_key = f"{method_prefix}_ml_constrained_binary"
+    vintage_index = {value: idx for idx, value in enumerate(ordered_vintages)}
+    inline_index = {value: idx for idx, value in enumerate(inline_ids)}
+    nt, nx = outputs[0]["pair"].baseline.shape
+    probabilities = np.full((len(ordered_vintages), len(inline_ids), nt, nx), np.nan, dtype=np.float32)
+    uncertainties = np.full_like(probabilities, np.nan, dtype=np.float32)
+    reservoir_volume = np.zeros_like(probabilities, dtype=np.float32)
+    support_volume = np.zeros_like(probabilities, dtype=np.float32)
+    base_binaries = np.zeros_like(probabilities, dtype=bool)
+    available = np.zeros((len(ordered_vintages), len(inline_ids)), dtype=bool)
+    pair_name_grid = np.full((len(ordered_vintages), len(inline_ids)), "", dtype=object)
+
+    for output in outputs:
+        pair = output["pair"]
+        vintage_label = _field_group_key(pair, "vintage", pair.name)
+        inline_label = _field_group_key(pair, "inline_id", pair.name)
+        vintage_idx = vintage_index[vintage_label]
+        inline_idx = inline_index[inline_label]
+        probabilities[vintage_idx, inline_idx] = output[probability_key].astype(np.float32)
+        uncertainties[vintage_idx, inline_idx] = output[uncertainty_key].astype(np.float32)
+        reservoir_volume[vintage_idx, inline_idx] = (
+            pair.reservoir_mask.astype(np.float32)
+            if pair.reservoir_mask is not None
+            else np.ones_like(pair.baseline, dtype=np.float32)
+        )
+        support_volume[vintage_idx, inline_idx] = (
+            output["support_volume"].astype(np.float32)
+            if output.get("support_volume") is not None
+            else np.zeros_like(pair.baseline, dtype=np.float32)
+        )
+        seed_entry = seed_results.get(pair.name)
+        base_binaries[vintage_idx, inline_idx] = (
+            seed_entry["binary"].astype(bool)
+            if seed_entry is not None
+            else output[constrained_seed_key].astype(bool)
+        )
+        available[vintage_idx, inline_idx] = True
+        pair_name_grid[vintage_idx, inline_idx] = pair.name
+
+    base_trace_support = np.any(base_binaries, axis=2)
+    spatial_trace_support = np.zeros_like(base_trace_support, dtype=bool)
+    spatial_window = max(int(temporal_cfg.get("trace_window_size", structured_cfg.get("trace_window_size", 3))), 1)
+    spatial_vote_fraction = float(
+        temporal_cfg.get("trace_vote_fraction", structured_cfg.get("trace_vote_fraction", 0.34))
+    )
+    for vintage_idx in range(len(ordered_vintages)):
+        spatial_trace_support[vintage_idx] = _trace_support_majority(
+            base_trace_support[vintage_idx],
+            window_size=spatial_window,
+            vote_fraction=spatial_vote_fraction,
+        )
+    temporal_trace_support = _temporal_trace_support_majority(
+        base_trace_support,
+        window_size=max(int(temporal_cfg.get("temporal_window_size", 3)), 1),
+        vote_fraction=float(temporal_cfg.get("temporal_trace_vote_fraction", 0.34)),
+    )
+    combined_trace_support = base_trace_support | spatial_trace_support | temporal_trace_support
+    if bool(temporal_cfg.get("enforce_monotone_growth", True)) and combined_trace_support.shape[0] > 1:
+        combined_trace_support = np.maximum.accumulate(combined_trace_support, axis=0)
+
+    inline_probability_weight = float(temporal_cfg.get("inline_probability_weight", 0.2))
+    temporal_probability_weight = float(temporal_cfg.get("temporal_probability_weight", 0.35))
+    support_volume_weight = float(temporal_cfg.get("support_volume_weight", 0.08))
+    inline_half_window = max(int(temporal_cfg.get("inline_window_size", 3)), 1) // 2
+    temporal_half_window = max(int(temporal_cfg.get("temporal_window_size", 3)), 1) // 2
+    blended_probabilities = np.full_like(probabilities, np.nan, dtype=np.float32)
+    blended_uncertainties = np.full_like(probabilities, np.nan, dtype=np.float32)
+
+    for vintage_idx in range(len(ordered_vintages)):
+        for inline_idx in range(len(inline_ids)):
+            if not available[vintage_idx, inline_idx]:
+                continue
+            blended = probabilities[vintage_idx, inline_idx].astype(np.float32).copy()
+            weight_total = 1.0
+            uncertainty_bonus = np.zeros_like(blended, dtype=np.float32)
+            if inline_probability_weight > 0.0 and len(inline_ids) > 1:
+                lower = max(0, inline_idx - inline_half_window)
+                upper = min(len(inline_ids), inline_idx + inline_half_window + 1)
+                inline_window = probabilities[vintage_idx, lower:upper]
+                inline_mean = np.nanmean(inline_window, axis=0)
+                inline_std = np.nanstd(inline_window, axis=0)
+                if not np.all(np.isnan(inline_mean)):
+                    blended += inline_probability_weight * np.nan_to_num(inline_mean, nan=0.0)
+                    uncertainty_bonus += np.nan_to_num(inline_std, nan=0.0).astype(np.float32)
+                    weight_total += inline_probability_weight
+            if temporal_probability_weight > 0.0 and len(ordered_vintages) > 1:
+                lower = max(0, vintage_idx - temporal_half_window)
+                upper = min(len(ordered_vintages), vintage_idx + temporal_half_window + 1)
+                temporal_window = probabilities[lower:upper, inline_idx]
+                temporal_mean = np.nanmean(temporal_window, axis=0)
+                temporal_std = np.nanstd(temporal_window, axis=0)
+                if not np.all(np.isnan(temporal_mean)):
+                    blended += temporal_probability_weight * np.nan_to_num(temporal_mean, nan=0.0)
+                    uncertainty_bonus += np.nan_to_num(temporal_std, nan=0.0).astype(np.float32)
+                    weight_total += temporal_probability_weight
+            blended = (blended / max(weight_total, 1e-6)).astype(np.float32)
+            if support_volume_weight > 0.0:
+                blended = np.clip(
+                    blended + support_volume_weight * support_volume[vintage_idx, inline_idx].astype(np.float32),
+                    0.0,
+                    1.0,
+                ).astype(np.float32)
+            blended_probabilities[vintage_idx, inline_idx] = blended
+            blended_uncertainties[vintage_idx, inline_idx] = (
+                uncertainties[vintage_idx, inline_idx].astype(np.float32) + uncertainty_bonus
+            ).astype(np.float32)
+
+    column_cfg = {
+        "vertical_sigma": float(temporal_cfg.get("vertical_sigma", structured_cfg.get("vertical_sigma", 1.0))),
+        "column_relative_threshold": float(
+            temporal_cfg.get("column_relative_threshold", structured_cfg.get("column_relative_threshold", 0.45))
+        ),
+        "min_peak_probability": float(
+            temporal_cfg.get("min_peak_probability", structured_cfg.get("min_peak_probability", 0.5))
+        ),
+        "vertical_margin": int(temporal_cfg.get("vertical_margin", structured_cfg.get("vertical_margin", 2))),
+    }
+    temporal_dilation = max(int(temporal_cfg.get("temporal_dilation", 1)), 0)
+    emergence_probability_threshold = float(temporal_cfg.get("emergence_probability_threshold", 0.52))
+    enforce_monotone_growth = bool(temporal_cfg.get("enforce_monotone_growth", True))
+    reconstructed = np.zeros_like(base_binaries, dtype=bool)
+
+    for vintage_idx in range(len(ordered_vintages)):
+        for inline_idx in range(len(inline_ids)):
+            if not available[vintage_idx, inline_idx]:
+                continue
+            for trace_index in np.where(combined_trace_support[vintage_idx, inline_idx])[0]:
+                reservoir_column = reservoir_volume[vintage_idx, inline_idx, :, trace_index]
+                seed_column = base_binaries[vintage_idx, inline_idx, :, trace_index]
+                candidate = _reconstruct_support_column(
+                    blended_probabilities[vintage_idx, inline_idx, :, trace_index],
+                    seed_column,
+                    reservoir_column,
+                    column_cfg,
+                )
+                if vintage_idx > 0:
+                    previous_column = reconstructed[vintage_idx - 1, inline_idx, :, trace_index]
+                    if np.any(previous_column):
+                        dilated_previous = (
+                            ndimage.binary_dilation(previous_column.astype(bool), iterations=temporal_dilation)
+                            if temporal_dilation > 0
+                            else previous_column.astype(bool)
+                        )
+                        if enforce_monotone_growth:
+                            candidate |= previous_column.astype(bool)
+                        new_support = candidate & ~previous_column.astype(bool)
+                        if np.any(new_support):
+                            strong_new = (
+                                blended_probabilities[vintage_idx, inline_idx, :, trace_index]
+                                >= emergence_probability_threshold
+                            )
+                            candidate = previous_column.astype(bool) | (new_support & (dilated_previous | strong_new))
+                candidate &= reservoir_column > 0.5
+                reconstructed[vintage_idx, inline_idx, :, trace_index] = candidate.astype(bool)
+
+    cleaned_hypervolume, hypervolume_metadata = _cleanup_field_hypervolume(
+        reconstructed,
+        reservoir_volume,
+        temporal_cfg,
+    )
+
+    results: dict[str, dict[str, Any]] = {}
+    for vintage_idx in range(len(ordered_vintages)):
+        for inline_idx in range(len(inline_ids)):
+            if not available[vintage_idx, inline_idx]:
+                continue
+            pair_name = str(pair_name_grid[vintage_idx, inline_idx])
+            results[pair_name] = {
+                "binary": cleaned_hypervolume[vintage_idx, inline_idx].astype(bool),
+                "uncertainty": blended_uncertainties[vintage_idx, inline_idx].astype(np.float32),
+                "metadata": {
+                    "enabled": True,
+                    "temporal_structured_support_enabled": True,
+                    "trace_window_size": int(spatial_window),
+                    "trace_vote_fraction": float(spatial_vote_fraction),
+                    "temporal_window_size": int(max(int(temporal_cfg.get("temporal_window_size", 3)), 1)),
+                    "temporal_trace_vote_fraction": float(temporal_cfg.get("temporal_trace_vote_fraction", 0.34)),
+                    "inline_window_size": int(max(int(temporal_cfg.get("inline_window_size", 3)), 1)),
+                    "inline_probability_weight": float(inline_probability_weight),
+                    "temporal_probability_weight": float(temporal_probability_weight),
+                    "support_volume_weight": float(support_volume_weight),
+                    "vertical_sigma": float(column_cfg["vertical_sigma"]),
+                    "column_relative_threshold": float(column_cfg["column_relative_threshold"]),
+                    "min_peak_probability": float(column_cfg["min_peak_probability"]),
+                    "vertical_margin": int(column_cfg["vertical_margin"]),
+                    "enforce_monotone_growth": bool(enforce_monotone_growth),
+                    "temporal_dilation": int(temporal_dilation),
+                    "emergence_probability_threshold": float(emergence_probability_threshold),
+                    **hypervolume_metadata,
+                },
+            }
+    return results
+
+
 def _apply_pseudo3d_consistency(
     outputs: list[dict[str, Any]],
     config: dict[str, Any],
@@ -1068,6 +1356,10 @@ def _build_volume_summary(
         "best_classical_constrained": ("best_classical_constrained_binary", "best_classical_constrained_uncertainty"),
         "plain_ml_constrained": ("plain_ml_constrained_binary", "plain_ml_constrained_uncertainty"),
         "plain_ml_pseudo3d_constrained": ("plain_ml_pseudo3d_constrained_binary", "plain_ml_pseudo3d_constrained_uncertainty"),
+        "plain_ml_temporal_structured_constrained": (
+            "plain_ml_temporal_structured_constrained_binary",
+            "plain_ml_temporal_structured_constrained_uncertainty",
+        ),
         "plain_ml_structured_constrained": (
             "plain_ml_structured_constrained_binary",
             "plain_ml_structured_constrained_uncertainty",
@@ -1341,6 +1633,7 @@ def _build_sequence_method_summary(outputs: list[dict[str, Any]]) -> dict[str, A
     method_keys = {
         "best_classical_constrained": "best_classical_constrained_binary",
         "plain_ml_constrained": "plain_ml_constrained_binary",
+        "plain_ml_temporal_structured_constrained": "plain_ml_temporal_structured_constrained_binary",
         "plain_ml_structured_constrained": "plain_ml_structured_constrained_binary",
         "temporal_ml_constrained": "temporal_ml_constrained_binary",
         "wave_temporal_constrained": "wave_temporal_constrained_binary",
@@ -1615,6 +1908,12 @@ def summarize_field_prediction_bundle(config: dict[str, Any], bundle: FieldPredi
         config,
         method_prefix="plain",
     )
+    plain_temporal_structured = _apply_temporal_structured_support_inference(
+        bundle.outputs,
+        config,
+        method_prefix="plain",
+        seed_results=plain_structured,
+    )
     plain_layered_structured = _apply_layered_structured_support_reconstruction(
         bundle.outputs,
         config,
@@ -1692,6 +1991,27 @@ def summarize_field_prediction_bundle(config: dict[str, Any], bundle: FieldPredi
         field_output["plain_ml_structured_constraint_metadata"] = plain_structured.get(
             field_pair.name,
             {"metadata": field_output["plain_ml_constraint_metadata"]},
+        )["metadata"]
+
+        field_output["plain_ml_temporal_structured_constrained_binary"] = plain_temporal_structured.get(
+            field_pair.name,
+            {
+                "binary": field_output["plain_ml_structured_constrained_binary"],
+                "uncertainty": field_output["plain_ml_structured_constrained_uncertainty"],
+                "metadata": field_output["plain_ml_structured_constraint_metadata"],
+            },
+        )["binary"].astype(bool)
+        field_output["plain_ml_temporal_structured_constrained_uncertainty"] = plain_temporal_structured.get(
+            field_pair.name,
+            {
+                "binary": field_output["plain_ml_structured_constrained_binary"],
+                "uncertainty": field_output["plain_ml_structured_constrained_uncertainty"],
+                "metadata": field_output["plain_ml_structured_constraint_metadata"],
+            },
+        )["uncertainty"].astype(np.float32)
+        field_output["plain_ml_temporal_structured_constraint_metadata"] = plain_temporal_structured.get(
+            field_pair.name,
+            {"metadata": field_output["plain_ml_structured_constraint_metadata"]},
         )["metadata"]
 
         field_output["plain_ml_layered_structured_constrained_binary"] = plain_layered_structured.get(
@@ -1804,6 +2124,14 @@ def summarize_field_prediction_bundle(config: dict[str, Any], bundle: FieldPredi
             support_volume,
             field_output["plain_ml_structured_constraint_metadata"],
         )
+        plain_temporal_structured_summary = _summarize_binary_pair(
+            field_output["plain_ml_temporal_structured_constrained_binary"],
+            field_output["plain_ml_temporal_structured_constrained_uncertainty"],
+            field_pair,
+            pair_support_traces,
+            support_volume,
+            field_output["plain_ml_temporal_structured_constraint_metadata"],
+        )
         plain_layered_structured_summary = _summarize_binary_pair(
             field_output["plain_ml_layered_structured_constrained_binary"],
             field_output["plain_ml_layered_structured_constrained_uncertainty"],
@@ -1878,6 +2206,7 @@ def summarize_field_prediction_bundle(config: dict[str, Any], bundle: FieldPredi
             "plain_ml_constrained": plain_constrained_summary,
             "plain_ml_pseudo3d_constrained": plain_pseudo3d_summary,
             "plain_ml_structured_constrained": plain_structured_summary,
+            "plain_ml_temporal_structured_constrained": plain_temporal_structured_summary,
             "plain_ml_layered_structured_constrained": plain_layered_structured_summary,
             "hybrid_ml": hybrid_metrics,
             "hybrid_ml_constrained": hybrid_constrained_summary,

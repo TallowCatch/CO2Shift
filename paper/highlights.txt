@@ -1,5 +1,5 @@
-Public Sleipner products define an open eleven-inline pseudo-3D benchmark.
-Structured support mapping gives the strongest support-volume result on p10.
-A three-seed field check keeps p10 gains and clarifies the p07 trade-off.
-A cross-benchmark gate selects reproducible q=0.74--0.75 operating points.
-Low-memory adaptation can collapse occupancy and should be sanity-checked.
+Open Sleipner products define an eleven-inline pseudo-3D benchmark.
+Temporal support inference improves support-volume mapping on p07 and p10.
+Three reused seed artifacts preserve the main field gains without retraining.
+Wave-temporal transfer passes a conservative joint gate only at q=0.74--0.75.
+Low-memory adaptation can collapse occupancy and requires sanity checks.

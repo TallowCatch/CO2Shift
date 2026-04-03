@@ -1,21 +1,21 @@
 seed: 11
-output_root: runs/paper_evidence
+output_root: runs/paper_evidence_temporal_structured
 
 paper_evidence:
   enabled: true
-  claim: "An open pseudo-3D Sleipner benchmark supports structured support mapping on p10, a more selective p07 support-mapping comparison, and an explicit cross-benchmark operating protocol for field deployment."
+  claim: "An open pseudo-3D Sleipner benchmark enables benchmark-constrained temporal support inference that improves field-facing support mapping on both p07 and p10."
   paper_results_dir: paper/results
   synthetic_metrics_path: runs/paper_proto/results/metrics.json
   seed_sweep_summary_path: runs/paper_proto_seed_sweep/results/seed_sweep_summary.json
-  field_summary_path: runs/sleipner_p07_11inline/results/volume_manifest.json
-  direct_summary_path: runs/sleipner_p10_11inline/results/volume_manifest.json
-  field_config_path: configs/sleipner_p07_11inline_volume.yaml
-  direct_config_path: configs/sleipner_p10_11inline_volume.yaml
+  field_summary_path: runs/sleipner_p07_11inline_temporal_structured/results/summary.json
+  direct_summary_path: runs/sleipner_p10_11inline_temporal_structured/results/summary.json
+  field_config_path: configs/sleipner_p07_11inline_temporal_structured_volume.yaml
+  direct_config_path: configs/sleipner_p10_11inline_temporal_structured_volume.yaml
   field_stability:
     enabled: true
     benchmark_configs:
-      p07: configs/sleipner_p07_11inline.yaml
-      p10: configs/sleipner_p10_11inline.yaml
+      p07: configs/sleipner_p07_11inline_temporal_structured.yaml
+      p10: configs/sleipner_p10_11inline_temporal_structured.yaml
     seed_runs:
       - seed: 11
         artifacts_root: runs/paper_proto_seed_sweep/seed_11
@@ -27,6 +27,7 @@ paper_evidence:
       - best_classical_constrained
       - plain_ml_constrained
       - plain_ml_structured_constrained
+      - plain_ml_temporal_structured_constrained
       - plain_ml_layered_structured_constrained
     metrics:
       - support_volume_iou_2010

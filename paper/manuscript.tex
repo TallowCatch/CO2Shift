@@ -30,31 +30,33 @@
 \ifuseelsarticle
 \begin{frontmatter}
 
-\title{An open pseudo-3D Sleipner benchmark and operating protocol for time-lapse CO$_2$ support mapping}
+\title{Benchmark-constrained temporal support inference on an open pseudo-3D Sleipner benchmark for time-lapse CO$_2$ monitoring}
 
-\author{Ameer Alhashemi}
-\address{University of Birmingham, Birmingham, United Kingdom}
+\author[inst1]{Ameer Alhashemi\corref{cor1}}
+\ead{ameer3204@gmail.com}
+\cortext[cor1]{Corresponding author}
+\address[inst1]{University of Birmingham, Birmingham, United Kingdom}
 
 \begin{abstract}
-Public field evaluation of time-lapse seismic change mapping remains limited, especially for multi-inline assessment on open data. We construct a public pseudo-3D Sleipner benchmark from eleven neighboring inlines with two tracks: a p07 temporal branch (1994 to 2001, 2004, 2006) and a p10 direct branch (1994 to 2010). We compare constrained classical baselines, plain and hybrid machine learning, and deterministic structured support reconstruction. On a harder three-seed synthetic benchmark, plain machine learning is more stable than hybrid machine learning (Dice $0.544 \pm 0.008$ test; $0.206 \pm 0.032$ out-of-distribution). On field data, structured support reconstruction improves the main p10 support-volume IoU from 0.562 to 0.685 while preserving trace-support IoU at 0.907. Reusing three saved seed artifacts on the field benchmark keeps the same p10 ordering (support-volume IoU $0.637 \pm 0.037$ for structured plain machine learning versus $0.526 \pm 0.048$ for plain machine learning) and shows that on p07 the structured variant improves support-volume IoU over plain machine learning ($0.440 \pm 0.052$ versus $0.304 \pm 0.061$) while constrained classical retains the highest raw p07 support-volume IoU. We then add a fixed-artifact operating-point protocol for wave-temporal deployment: in a three-seed quantile sweep over 0.74 to 0.80, only 0.74 and 0.75 satisfy a joint gate (p10 support-volume IoU above constrained classical and p07 support-volume IoU at least as high as constrained classical), with 0.74 selected as primary. Adaptation sanity checks show that low-memory field adaptation can collapse occupancy (IoU to 0, outside-support fraction to 1), motivating no-adaptation transfer for this setting. The benchmark and protocol provide a reproducible open-data basis for field-facing monitoring claims.
+Public field evaluation of time-lapse seismic change mapping remains limited, especially for multi-inline assessment on open data. We construct an open pseudo-3D Sleipner benchmark from eleven neighboring inlines with two tracks: a p07 temporal branch (1994 to 2001, 2004, 2006) and a p10 direct branch (1994 to 2010). The main methodological contribution is a benchmark-constrained temporal support inference stage that extends structured support reconstruction with inline voting, temporal voting, probability blending across neighboring inlines and vintages, and monotone support-growth constraints. On a harder three-seed synthetic benchmark, plain machine learning is more stable than hybrid machine learning (Dice $0.544 \pm 0.008$ on the test split and $0.206 \pm 0.032$ out of distribution). On field data, temporal support inference increases p10 support-volume IoU from 0.562 for constrained plain machine learning and 0.685 for non-temporal structured reconstruction to 0.771, while retaining trace-support IoU at 0.907. On the p07 temporal benchmark it increases support-volume IoU from 0.300 and 0.438 to 0.600, with trace-support IoU 0.910 and crossline continuity 0.986 while remaining far more selective than the constrained classical baseline. Reusing three saved seed artifacts without additional field training confirms mean support-volume IoU of $0.709 \pm 0.044$ on p10 and $0.587 \pm 0.025$ on p07 for the temporal method, exceeding both plain and non-temporal structured baselines. A secondary wave-temporal deployment sweep shows that fixed-artifact transfer passes a joint p10/p07 gate only at quantiles 0.74 and 0.75, and low-memory adaptation can collapse occupancy entirely. The benchmark therefore supports both an open-data evaluation protocol and a field-facing temporal support inference method.
 \end{abstract}
 
 \begin{keyword}
-CO$_2$ storage monitoring \sep time-lapse seismic \sep Sleipner \sep pseudo-3D benchmark \sep machine learning \sep structured support mapping
+CO$_2$ storage monitoring \sep time-lapse seismic \sep Sleipner \sep pseudo-3D benchmark \sep temporal support inference \sep support mapping
 \end{keyword}
 
 \end{frontmatter}
 \else
-\title{An open pseudo-3D Sleipner benchmark and operating protocol for time-lapse CO$_2$ support mapping}
-\author{Ameer Alhashemi\\University of Birmingham, Birmingham, United Kingdom}
+\title{Benchmark-constrained temporal support inference on an open pseudo-3D Sleipner benchmark for time-lapse CO$_2$ monitoring}
+\author{Ameer Alhashemi\\University of Birmingham, Birmingham, United Kingdom\\\texttt{ameer3204@gmail.com}}
 \date{}
 \maketitle
 
 \begin{abstract}
-Public field evaluation of time-lapse seismic change mapping remains limited, especially for multi-inline assessment on open data. We construct a public pseudo-3D Sleipner benchmark from eleven neighboring inlines with two tracks: a p07 temporal branch (1994 to 2001, 2004, 2006) and a p10 direct branch (1994 to 2010). We compare constrained classical baselines, plain and hybrid machine learning, and deterministic structured support reconstruction. On a harder three-seed synthetic benchmark, plain machine learning is more stable than hybrid machine learning (Dice $0.544 \pm 0.008$ test; $0.206 \pm 0.032$ out-of-distribution). On field data, structured support reconstruction improves the main p10 support-volume IoU from 0.562 to 0.685 while preserving trace-support IoU at 0.907. Reusing three saved seed artifacts on the field benchmark keeps the same p10 ordering (support-volume IoU $0.637 \pm 0.037$ for structured plain machine learning versus $0.526 \pm 0.048$ for plain machine learning) and shows that on p07 the structured variant improves support-volume IoU over plain machine learning ($0.440 \pm 0.052$ versus $0.304 \pm 0.061$) while constrained classical retains the highest raw p07 support-volume IoU. We then add a fixed-artifact operating-point protocol for wave-temporal deployment: in a three-seed quantile sweep over 0.74 to 0.80, only 0.74 and 0.75 satisfy a joint gate (p10 support-volume IoU above constrained classical and p07 support-volume IoU at least as high as constrained classical), with 0.74 selected as primary. Adaptation sanity checks show that low-memory field adaptation can collapse occupancy (IoU to 0, outside-support fraction to 1), motivating no-adaptation transfer for this setting. The benchmark and protocol provide a reproducible open-data basis for field-facing monitoring claims.
+Public field evaluation of time-lapse seismic change mapping remains limited, especially for multi-inline assessment on open data. We construct an open pseudo-3D Sleipner benchmark from eleven neighboring inlines with two tracks: a p07 temporal branch (1994 to 2001, 2004, 2006) and a p10 direct branch (1994 to 2010). The main methodological contribution is a benchmark-constrained temporal support inference stage that extends structured support reconstruction with inline voting, temporal voting, probability blending across neighboring inlines and vintages, and monotone support-growth constraints. On a harder three-seed synthetic benchmark, plain machine learning is more stable than hybrid machine learning (Dice $0.544 \pm 0.008$ on the test split and $0.206 \pm 0.032$ out of distribution). On field data, temporal support inference increases p10 support-volume IoU from 0.562 for constrained plain machine learning and 0.685 for non-temporal structured reconstruction to 0.771, while retaining trace-support IoU at 0.907. On the p07 temporal benchmark it increases support-volume IoU from 0.300 and 0.438 to 0.600, with trace-support IoU 0.910 and crossline continuity 0.986 while remaining far more selective than the constrained classical baseline. Reusing three saved seed artifacts without additional field training confirms mean support-volume IoU of $0.709 \pm 0.044$ on p10 and $0.587 \pm 0.025$ on p07 for the temporal method, exceeding both plain and non-temporal structured baselines. A secondary wave-temporal deployment sweep shows that fixed-artifact transfer passes a joint p10/p07 gate only at quantiles 0.74 and 0.75, and low-memory adaptation can collapse occupancy entirely. The benchmark therefore supports both an open-data evaluation protocol and a field-facing temporal support inference method.
 \end{abstract}
 
-\noindent\textbf{Keywords.} CO$_2$ storage monitoring; time-lapse seismic; Sleipner; pseudo-3D benchmark; machine learning; structured support mapping
+\noindent\textbf{Keywords.} CO$_2$ storage monitoring; time-lapse seismic; Sleipner; pseudo-3D benchmark; temporal support inference; support mapping
 \fi
 
 \section{Introduction}
@@ -63,9 +65,9 @@ Time-lapse seismic data have played a central role in monitoring the Sleipner CO
 
 At the same time, Sleipner is a difficult testbed. Repeated surveys are affected by non-repeatability, processing changes, tuning effects, and uncertainty in how seismic response relates to plume geometry \citep{rickett2001crossequalization,alali2020crossequalization,romero2023joint}. Recent work has shown that physics-based inversion and segmentation constraints can improve field interpretation, but the workflow remains demanding and the final field products still depend on strong structural information \citep{romero2023joint,fachtony2025sleipner}. Machine learning studies have also shown promise, including prior work on Sleipner interpretation and site-specific field transfer at other storage sites \citep{li2021sleipnernn,leong2024seisco2net}. However, there is still a gap between simplified synthetic demonstrations and open, field-facing, reproducible pseudo-3D evaluation on public CO$_2$ monitoring data.
 
-This paper addresses that gap with three linked contributions. First, it constructs an open pseudo-3D Sleipner benchmark from eleven neighboring inlines while keeping the 2007 and 2010 processing families separate, thereby creating a transparent multi-inline testbed for public field evaluation. Second, it defines benchmark-constrained structured support mapping from per-section predictions to pseudo-3D support volumes, so that section-level outputs can be assessed as coherent monitoring products rather than as isolated slices. Third, it introduces an operating-point selection protocol for cross-benchmark field deployment using three-seed quantile sweeps, explicit gate criteria against constrained classical baselines, and adaptation sanity checks.
+This paper addresses that gap with three linked contributions. First, it constructs an open pseudo-3D Sleipner benchmark from eleven neighboring inlines while keeping the 2007 and 2010 processing families separate, thereby creating a transparent multi-inline public testbed for field evaluation. Second, it introduces benchmark-constrained temporal support inference, which converts section-wise probabilities into pseudo-3D support volumes using fixed inline, temporal, and support-volume constraints. Third, it retains a secondary operating-point protocol for wave-temporal deployment so that transfer claims can be stated conservatively rather than through one-off threshold choices.
 
-The central research question is whether benchmark-constrained pseudo-3D support mapping on public Sleipner data can improve on plain per-section machine learning, provide a defensible comparison with constrained classical baselines, and be made reproducible through an explicit operating protocol. On the present benchmark, the clearest field gain is obtained with structured support reconstruction built on plain machine learning, especially on the direct p10 branch, while the new operating protocol defines where wave-temporal deployment is reliable across both p10 and p07. The synthetic and field evaluations place the hybrid model in a secondary role, so the contribution should be read primarily as a benchmark, support-mapping, and deployment-protocol study.
+The central research question is whether benchmark-constrained temporal support inference on public Sleipner data can improve field-facing support mapping beyond plain per-section machine learning and non-temporal structured reconstruction while remaining reproducible across reused seed artifacts. On the present benchmark, the clearest field result is that the temporal structured method gives the strongest support-volume mapping on both the direct p10 branch and the temporal p07 branch. The hybrid model remains secondary, and the wave-temporal gate study is retained only as a supporting deployment sensitivity analysis. The paper should therefore be read primarily as a benchmark-plus-method study rather than as a broad model comparison.
 
 \section{Public data and benchmark construction}
 
@@ -128,7 +130,7 @@ Direct support audit
 \textbf{Per-section methods}\par
 Constrained classical baselines\par
 Plain machine learning\par
-Structured support reconstruction\par\medskip
+Temporal structured support inference\par\medskip
 \textbf{Pseudo-3D outputs}\par
 Support maps\par
 Support volumes\par\medskip
@@ -141,7 +143,7 @@ Crossline continuity
 \draw[flow, shorten <=2pt, shorten >=2pt] (design.east) -- (evaluation.west);
 \end{tikzpicture}
 }
-\caption{Public pseudo-3D benchmark design and evaluation protocol. Panel A summarizes the public seismic and benchmark products used to derive structural constraints. Panel B defines the two benchmark tracks used in the study. Panel C shows how constrained classical baselines, plain machine learning, and structured support reconstruction are evaluated through pseudo-3D support outputs and field metrics.}
+\caption{Public pseudo-3D benchmark design and evaluation protocol. Panel A summarizes the public seismic and benchmark products used to derive structural constraints. Panel B defines the two benchmark tracks used in the study. Panel C shows how constrained classical baselines, plain machine learning, and temporal structured support inference are evaluated through pseudo-3D support outputs and field metrics.}
 \label{fig:benchmarkdesign}
 \end{figure}
 
@@ -157,27 +159,31 @@ The study design is summarized in Fig.~\ref{fig:benchmarkdesign}. Public seismic
 
 \subsection{Per-section methods}
 
-We compare three method families at the per-section stage. The first consists of deterministic classical baselines such as difference maps, cross-equalized differences, local warping, and a matched warp-shift comparator. These methods provide a practical baseline under the same benchmark constraints used for machine learning outputs. The second family is plain machine learning, which predicts change support from baseline and monitor sections without additional hybrid inputs. The third family is a hybrid model that was originally expected to improve robustness.
+We compare three method families at the per-section stage. The deterministic classical family includes difference, normalized root-mean-square difference, impedance difference, cross-equalized difference, local warp difference, and matched warp-shift difference. Each classical score is thresholded with the threshold that maximizes validation-set intersection-over-union on the harder synthetic benchmark, after which the thresholded field output is passed through the same reservoir-mask and connected-component cleanup used for constrained outputs. For each field pair, \emph{best classical constrained} denotes the thresholded classical candidate with the highest support-volume intersection-over-union against the benchmark support volume; if a support-volume proxy is unavailable, trace-support intersection-over-union is used instead. This rule is fixed in code and is not tuned separately for p07 and p10.
 
-The current evidence places the hybrid model in a comparator role rather than in the central field result.
+The two learned per-section models are plain machine learning and a hybrid model with additional engineered inputs. The synthetic sweep identifies the plain learner as the stronger base model, so the main field method is built on the plain probabilities. The hybrid model is retained as a comparator and negative result.
 
-\subsection{Structured support reconstruction}
+\subsection{Benchmark-constrained structured reconstruction}
 
-The strongest field method evaluated here is the structured plain variant. It begins with per-section probabilities from the plain machine learning model, applies the public storage-interval mask, and then performs deterministic support reconstruction to promote laterally coherent and geologically plausible support bodies. The reconstruction stage removes isolated artifacts, preserves thin but coherent support streaks, and performs connected-component cleanup in pseudo-3D space across inline, sample, and trace dimensions.
+The non-temporal structured baseline reconstructs support independently within each vintage after the per-section constrained plain-machine-learning output is available. For each vintage, the eleven inlines are grouped into a pseudo-3D volume and an active trace-support mask is obtained by majority voting across neighboring inlines with window size 3 and vote fraction 0.34. For each active trace, the vertical support column is reconstructed from the plain probabilities after Gaussian smoothing with $\sigma=1.25$. The local column profile is blended with the mean probability of adjacent inlines using a fixed 70:30 mixture. The reconstructed interval is then taken as the largest connected 1D component above a relative threshold of 0.45 times the local peak, with minimum peak probability 0.50 and a vertical dilation margin of 2 samples. The reported structured baseline uses no final morphological opening or closing and no component truncation.
 
-This stage is intentionally simple. It transforms per-section probabilities into a support volume that is better aligned with the public benchmark constraints and more useful for multi-inline monitoring assessment.
+\subsection{Benchmark-constrained temporal support inference}
 
-We also tested a layer-aware extension that split the storage interval into benchmark-informed bands and enforced stronger vertical rules. That extension did not improve the real benchmark and is therefore treated as a secondary result.
+The proposed method extends structured reconstruction into a pseudo-3D temporal inference problem. Starting from the structured plain result as a seed, the plain-model probabilities are assembled into a 4D array over vintage, inline, sample, and trace. Trace support is expanded by inline-majority voting (window size 3, vote fraction 0.34) and temporal-majority voting across vintages (window size 3, vote fraction 0.34). The active trace-support mask is then accumulated forward in time to enforce monotone support growth.
+
+Within each active trace, the probability profile for the current vintage is blended with the mean probability of neighboring inlines (weight 0.20), the mean probability of neighboring vintages (weight 0.35), and the benchmark support-volume prior (weight 0.08). The resulting column is reconstructed with Gaussian smoothing $\sigma=1.0$, relative threshold 0.42, minimum peak probability 0.45, and vertical dilation margin 2. Support that emerges relative to the previous vintage is retained only if it overlaps the previous support column after one-sample dilation or if its local probability exceeds 0.52. The final 4D hypervolume is clipped to the reservoir mask and reported without additional morphological closing or component pruning in the main configuration.
+
+We also tested a layer-aware extension that split the storage interval into benchmark-informed bands and enforced stronger vertical rules. That extension did not improve the field benchmark and is therefore retained only as a negative control.
 
 \subsection{Evaluation metrics}
 
 Synthetic experiments are reported using Dice, intersection-over-union, false-positive rate, and expected calibration error. Because the synthetic benchmark includes repeated training, the machine learning models are summarized with three-seed mean and standard deviation. Deterministic classical baselines are reported once because they do not depend on training seeds.
 
-Field experiments are evaluated with metrics that are more appropriate for pseudo-3D monitoring. These include trace-support intersection-over-union with the public 2010 support proxy, support-volume intersection-over-union, crossline continuity, predicted support fraction, and predicted fraction outside the support volume. The direct 2010 benchmark is treated as the main truth test because it compares seismic data and support proxy within the same processing family. The p07 temporal benchmark is used as a secondary test of support evolution and crossline stability.
+Field experiments are evaluated with metrics that are more appropriate for pseudo-3D monitoring. These include trace-support intersection-over-union with the public 2010 support proxy, support-volume intersection-over-union, crossline continuity, predicted trace fraction, and predicted fraction outside the support volume. The direct 2010 benchmark is treated as the main truth test because it compares seismic data and support proxy within the same processing family. The p07 temporal benchmark is used to test whether the inferred support remains selective, temporally consistent, and crossline coherent across the earlier monitor vintages.
 
 \section{Experimental design}
 
-The experiments are organized around four questions. The first asks whether the per-section models are stable on the harder synthetic benchmark. The second asks whether structured support reconstruction improves pseudo-3D field mapping on the direct eleven-inline benchmark. The third asks whether the same field method yields physically sensible temporal behavior on the eleven-inline p07 benchmark. The fourth asks whether a fixed-artifact quantile protocol can identify cross-benchmark operating points that outperform constrained classical baselines while avoiding unstable adaptation behavior.
+The experiments are organized around four questions. The first asks whether the per-section models are stable on the harder synthetic benchmark. The second asks whether benchmark-constrained structured reconstruction improves pseudo-3D field mapping on the direct eleven-inline benchmark. The third asks whether the proposed temporal support inference stage improves the temporal eleven-inline benchmark relative to both plain machine learning and the non-temporal structured baseline. The fourth asks whether a fixed-artifact quantile protocol can still identify conservative cross-benchmark operating points for the separate wave-temporal comparator while avoiding unstable adaptation behavior.
 
 For synthetic evaluation, we retrain the plain and hybrid models with seeds 11, 12, and 13. For field evaluation, all methods operate on the same exported pseudo-3D benchmarks and the same public support constraints. To test whether the main field claim is tied to a single trained artifact, the p07 and p10 benchmarks are also re-evaluated using the saved seed-11, seed-12, and seed-13 artifact roots from the harder synthetic sweep, with no additional field training. This keeps the comparison focused on the mapping method rather than on manual changes to the data pipeline.
 
@@ -213,73 +219,73 @@ The synthetic sweep clarifies the model comparison and identifies plain machine 
 
 \subsection{Direct eleven-inline benchmark}
 
-The direct p10 benchmark is the clearest field result in the paper. Table~\ref{tab:direct} shows that the structured support reconstruction improves support-volume intersection-over-union from 0.562 for constrained plain machine learning to 0.685 while keeping trace-support overlap nearly unchanged at 0.907 versus 0.910. The constrained classical baseline is far less selective. Its trace-support intersection-over-union is only 0.322 and 62.3\% of its predicted support lies outside the public support volume.
+The direct p10 benchmark is the clearest field result in the paper. Table~\ref{tab:direct} shows that non-temporal structured reconstruction improves support-volume intersection-over-union from 0.562 for constrained plain machine learning to 0.685, and the temporal support inference stage improves it further to 0.771 while keeping trace-support overlap essentially unchanged at 0.907. The predicted trace fraction remains nearly identical across the two learned support-mapping variants (0.352 for both structured methods), which means the p10 gain is not produced by indiscriminate support growth. The constrained classical baseline is much less selective, occupying 99.0\% of traces and placing 62.3\% of its predicted support outside the benchmark support volume.
 
 \begin{table}[t]
 \centering
 \small
-\caption{Direct eleven-inline p10 benchmark. The structured support method yields the strongest support-volume result while preserving lateral support alignment.}
+\caption{Direct eleven-inline p10 benchmark. The temporal support inference method yields the strongest support-volume result while preserving trace-support overlap and lateral support alignment.}
 \label{tab:direct}
 \resizebox{\textwidth}{!}{%
-\begin{tabular}{lcccc}
+\begin{tabular}{lccccc}
 \toprule
-Method & Trace-support IoU & Support-volume IoU & Crossline continuity & Fraction outside support \\
+Method & Predicted trace fraction & Trace-support IoU & Support-volume IoU & Crossline continuity & Fraction outside support \\
 \midrule
-Best classical constrained & 0.322 & 0.363 & 0.987 & 0.623 \\
-Plain ML constrained & 0.910 & 0.562 & 0.973 & 0.018 \\
-Plain ML structured constrained & 0.907 & 0.685 & 0.977 & 0.025 \\
-Plain ML layered structured constrained & 0.758 & 0.475 & 0.789 & 0.070 \\
+Best classical constrained & 0.990 & 0.322 & 0.363 & 0.987 & 0.623 \\
+Plain ML constrained & 0.351 & 0.910 & 0.562 & 0.973 & 0.018 \\
+Plain ML structured constrained & 0.352 & 0.907 & 0.685 & 0.977 & 0.025 \\
+Plain ML temporal structured constrained & 0.352 & 0.907 & 0.771 & 0.978 & 0.028 \\
 \bottomrule
 \end{tabular}
 }
 \end{table}
 
-Figure~\ref{fig:directpanel} illustrates this result on inline 1840. The structured method is more compact and better aligned with the benchmark support than the classical baseline, while the layer-aware extension visibly under-recovers the interpreted support extent.
+Figure~\ref{fig:directpanel} illustrates this result on inline 1840. The temporal method retains the compact geometry of the structured baseline while recovering more of the benchmark support extent. The layer-aware extension remained weaker and is discussed later only as a negative control.
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=\textwidth]{figures/paper_direct_2010_panel.png}
-\caption{Direct p10 benchmark on inline 1840. From left to right the panels show the best constrained classical baseline, constrained plain machine learning, constrained plain machine learning with structured support reconstruction, the tested layer-aware extension, and the benchmark support. The structured support procedure provides the strongest support-volume agreement on the direct benchmark.}
+\caption{Direct p10 benchmark on inline 1840. From left to right the panels show the best constrained classical baseline, constrained plain machine learning, constrained plain machine learning with non-temporal structured reconstruction, constrained plain machine learning with temporal support inference, and the benchmark support. The temporal support inference method provides the strongest support-volume agreement on the direct benchmark.}
 \label{fig:directpanel}
 \end{figure}
 
 \subsection{Temporal eleven-inline benchmark}
 
-The p07 temporal benchmark is more nuanced and is therefore important for an honest interpretation. Across the full eleven-inline volume, the constrained classical baseline achieves a higher raw support-volume intersection-over-union than plain machine learning because it predicts support almost everywhere inside the permitted region. Its predicted trace fraction is 0.995 and 48.8\% of the predicted support still lies outside the public support proxy. In contrast, structured plain machine learning reaches support-volume intersection-over-union of 0.438 with trace-support overlap of 0.879 and crossline continuity of 0.982, while keeping the predicted fraction outside support to 0.002. Table~\ref{tab:temporal} summarizes these overall results.
+The p07 temporal benchmark is where temporal coupling matters most. Across the full eleven-inline volume, the constrained classical baseline attains support-volume intersection-over-union of 0.477 by predicting support on almost the entire permitted trace set: its predicted trace fraction is 0.995 and 48.8\% of the predicted support lies outside the public support proxy. Plain machine learning is much more selective but under-fills the support volume. Non-temporal structured reconstruction improves this balance, and the temporal support inference stage improves it further, reaching support-volume intersection-over-union of 0.600 with trace-support overlap of 0.910 and crossline continuity of 0.986 while keeping the predicted trace fraction to 0.359. Table~\ref{tab:temporal} summarizes these overall results.
 
 \begin{table}[t]
 \centering
 \small
-\caption{Overall results on the eleven-inline p07 temporal benchmark. The classical baseline attains a large support-volume score by spreading support too broadly, whereas the structured plain method remains selective and coherent.}
+\caption{Overall results on the eleven-inline p07 temporal benchmark. The temporal support inference method improves support-volume and trace-support agreement while remaining much more selective than the constrained classical baseline.}
 \label{tab:temporal}
 \resizebox{\textwidth}{!}{%
-\begin{tabular}{lcccc}
+\begin{tabular}{lccccc}
 \toprule
-Method & Trace-support IoU & Support-volume IoU & Crossline continuity & Fraction outside support \\
+Method & Predicted trace fraction & Trace-support IoU & Support-volume IoU & Crossline continuity & Fraction outside support \\
 \midrule
-Best classical constrained & 0.385 & 0.477 & 0.998 & 0.488 \\
-Plain ML constrained & 0.873 & 0.300 & 0.967 & 0.001 \\
-Plain ML structured constrained & 0.879 & 0.438 & 0.982 & 0.002 \\
-Plain ML layered structured constrained & 0.721 & 0.433 & 0.788 & 0.004 \\
+Best classical constrained & 0.995 & 0.385 & 0.477 & 0.998 & 0.488 \\
+Plain ML constrained & 0.339 & 0.873 & 0.300 & 0.967 & 0.001 \\
+Plain ML structured constrained & 0.342 & 0.879 & 0.438 & 0.982 & 0.002 \\
+Plain ML temporal structured constrained & 0.359 & 0.910 & 0.600 & 0.986 & 0.005 \\
 \bottomrule
 \end{tabular}
 }
 \end{table}
 
-The temporal slices in Fig.~\ref{fig:p07panel} show that the structured method preserves a compact and coherent support geometry across the 2001, 2004, and 2006 monitors while following the public 2010 support envelope. The result remains benchmark-constrained and is interpreted here as a support-mapping product.
+The temporal slices in Fig.~\ref{fig:p07panel} show that the temporal method preserves a compact and coherent support geometry across the 2001, 2004, and 2006 monitors while following the public 2010 support envelope. The inferred support remains benchmark-constrained and is interpreted here as a support-mapping product rather than as a saturation estimate.
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.95\textwidth]{figures/p07_temporal_panel.png}
-\caption{Structured plain support maps on inline 1840 for the p07 temporal benchmark. White contours show the public 2010 support proxy. The maps remain compact across vintages while staying inside the benchmark-constrained support region.}
+\caption{Temporal structured support maps on inline 1840 for the p07 temporal benchmark. White contours show the public 2010 support proxy. The inferred support remains compact across vintages while expanding in a benchmark-constrained manner.}
 \label{fig:p07panel}
 \end{figure}
 
 \subsection{Three-seed field stability of the main field baselines}
 
-To test whether the main field conclusion depends on a single trained artifact, we re-evaluated the direct p10 and temporal p07 benchmarks with the saved seed-11, seed-12, and seed-13 artifacts from the harder synthetic sweep and no additional field training. Table~\ref{tab:fieldstability} shows that the structured plain method remains the strongest support-volume baseline on p10, improving mean support-volume IoU from $0.526 \pm 0.048$ for plain machine learning to $0.637 \pm 0.037$, while staying above the constrained classical baseline for all three seeds. On p07, the structured plain method again improves over plain machine learning on mean support-volume IoU ($0.440 \pm 0.052$ versus $0.304 \pm 0.061$) and slightly improves mean trace-support overlap and crossline continuity, but the constrained classical baseline retains the highest raw p07 support-volume IoU by occupying a much larger fraction of the allowed support region.
+To test whether the main field conclusion depends on a single trained artifact, we re-evaluated the direct p10 and temporal p07 benchmarks with the saved seed-11, seed-12, and seed-13 artifacts from the harder synthetic sweep and no additional field training. Table~\ref{tab:fieldstability} shows that the temporal method remains the strongest support-volume variant on both branches. On p10, mean support-volume IoU rises from $0.526 \pm 0.048$ for plain machine learning and $0.637 \pm 0.037$ for the non-temporal structured baseline to $0.709 \pm 0.044$ for the temporal method. On p07, the temporal method increases mean support-volume IoU to $0.587 \pm 0.025$, above both non-temporal structured reconstruction ($0.440 \pm 0.052$) and the constrained classical baseline (0.477). The mean p07 trace-support IoU also rises to $0.925 \pm 0.010$.
 
-This stability check sharpens the interpretation of the field results. The direct p10 branch supports a robust support-volume claim for structured support mapping. The p07 branch supports a more selective and laterally coherent support-mapping claim relative to plain machine learning, but not a blanket reversal of the constrained classical baseline on raw support-volume IoU.
+This stability check sharpens the interpretation of the field results. The direct p10 branch supports a robust support-volume claim for temporal support inference. The p07 branch shows the same method advantage, although the mean crossline continuity of the temporal method ($0.959 \pm 0.020$) is slightly lower than that of the non-temporal structured baseline ($0.969 \pm 0.011$). The trade-off is therefore not hidden: the temporal method gains support-volume agreement and trace-support overlap while maintaining high, though not maximal, crossline continuity.
 
 \begin{table}[t]
 \centering
@@ -294,18 +300,20 @@ Benchmark & Method & SV IoU & Trace-support IoU & Crossline continuity & Fractio
 p07 & Best classical constrained & 0.477 $\pm$ 0.000 & 0.385 $\pm$ 0.000 & 0.998 $\pm$ 0.000 & 0.488 $\pm$ 0.000 \\
 p07 & Plain ML constrained & 0.304 $\pm$ 0.061 & 0.886 $\pm$ 0.012 & 0.956 $\pm$ 0.009 & 0.003 $\pm$ 0.002 \\
 p07 & Plain ML structured constrained & 0.440 $\pm$ 0.052 & 0.890 $\pm$ 0.012 & 0.969 $\pm$ 0.011 & 0.007 $\pm$ 0.006 \\
+p07 & Plain ML temporal structured constrained & 0.587 $\pm$ 0.025 & 0.925 $\pm$ 0.010 & 0.959 $\pm$ 0.020 & 0.013 $\pm$ 0.009 \\
 \midrule
 p10 & Best classical constrained & 0.363 $\pm$ 0.000 & 0.322 $\pm$ 0.000 & 0.987 $\pm$ 0.000 & 0.623 $\pm$ 0.000 \\
 p10 & Plain ML constrained & 0.526 $\pm$ 0.048 & 0.794 $\pm$ 0.158 & 0.863 $\pm$ 0.142 & 0.072 $\pm$ 0.077 \\
 p10 & Plain ML structured constrained & 0.637 $\pm$ 0.037 & 0.770 $\pm$ 0.188 & 0.924 $\pm$ 0.065 & 0.096 $\pm$ 0.100 \\
+p10 & Plain ML temporal structured constrained & 0.709 $\pm$ 0.044 & 0.770 $\pm$ 0.188 & 0.926 $\pm$ 0.064 & 0.103 $\pm$ 0.104 \\
 \bottomrule
 \end{tabular}
 }
 \end{table}
 
-\subsection{Cross-benchmark gate and adaptation-failure analysis}
+\subsection{Secondary wave-temporal deployment sensitivity analysis}
 
-An additional field study was performed to define a deployable operating protocol for the wave-temporal comparator rather than to argue for universal superiority. In low-memory mode with field adaptation steps enabled, adaptation collapsed support occupancy on both branches. For a p10 check at quantile 0.82, support-volume intersection-over-union fell from 0.526 (no adaptation) to 0.000 (adaptation), while the predicted fraction outside support rose from 0.090 to 1.000. For p07 at the same quantile, support-volume intersection-over-union similarly fell from 0.159 to 0.000 and outside-support fraction rose to 1.000. This motivated a fixed-artifact, no-adaptation protocol for the cross-benchmark sweep.
+An additional field study was performed to define a deployable operating protocol for the wave-temporal comparator rather than to support the main method claim. In low-memory mode with field adaptation steps enabled, adaptation collapsed support occupancy on both branches. For a p10 check at quantile 0.82, support-volume intersection-over-union fell from 0.526 (no adaptation) to 0.000 (adaptation), while the predicted fraction outside support rose from 0.090 to 1.000. For p07 at the same quantile, support-volume intersection-over-union similarly fell from 0.159 to 0.000 and the outside-support fraction rose to 1.000. This motivated a fixed-artifact, no-adaptation protocol for the cross-benchmark sweep.
 
 Using that protocol, a three-seed quantile sweep on $q \in [0.74, 0.80]$ was run jointly on p10 and p07. On p10, wave-temporal support-volume intersection-over-union remained above constrained classical for every tested quantile (0.570 versus 0.345). On p07, performance was threshold-sensitive and met or exceeded constrained classical only at quantiles 0.74 and 0.75, with margins of +0.024 and +0.013. Table~\ref{tab:gate} summarizes the resulting gate decision.
 
@@ -331,7 +339,7 @@ Quantile & p10 wave SV IoU & p10 classical SV IoU & p07 wave SV IoU & p07 classi
 }
 \end{table}
 
-The pass region is therefore narrow but reproducible. Quantile 0.74 is selected as the primary operating point, with 0.75 retained as a sensitivity check. We interpret this as a deployment operating region rather than as a universal threshold rule.
+The pass region is therefore narrow but reproducible. Quantile 0.74 is selected as the primary operating point, with 0.75 retained as a sensitivity check. This result is interpreted only as a deployment sensitivity region for the separate wave-temporal comparator, not as the main novelty of the paper.
 
 \subsection{Negative results and false alarms}
 
@@ -341,27 +349,27 @@ The negative-control synthetic scenarios also reinforce this point. On mismatch-
 
 \section{Discussion}
 
-The main result is that benchmark-constrained structured support reconstruction adds value when the underlying section-level learner is stable, but that value depends on which benchmark question is being asked. On the direct eleven-inline p10 benchmark, the structured method improves support-volume overlap relative to constrained plain machine learning in the main run and retains that ordering across three reused seed artifacts. On the temporal p07 benchmark, the structured method improves on plain machine learning and remains much more selective than the constrained classical baseline, but the classical baseline still attains the highest raw support-volume IoU by occupying too much of the permitted support region. This matters for CCS monitoring because a method that improves section-level overlap while producing spatially inconsistent or overly broad support bodies is unlikely to be useful in practice. In that sense, the paper's novelty lies less in proposing a new learner than in showing how open public products can be assembled into a pseudo-3D benchmark where support mapping and deployment decisions are evaluated explicitly.
+The main result is that the open benchmark supports a method claim, not only a benchmarking claim. Benchmark-constrained temporal support inference converts stable section-level probabilities into pseudo-3D support volumes that outperform both plain machine learning and non-temporal structured reconstruction on the direct and temporal branches. On p10 the gain is primarily volumetric: support-volume agreement rises strongly while trace-support overlap remains essentially unchanged. On p07 the gain comes from coupling inline and vintage context. The temporal method increases support-volume and trace-support agreement while keeping the predicted trace fraction far below the near-saturated classical occupancy.
 
-A second main result is methodological: explicit operating-point selection materially changes the field conclusion for wave-temporal deployment. With fixed artifacts and no adaptation, p10 remains above constrained classical across the tested quantiles, while p07 crosses the classical baseline only in a narrow region (0.74 and 0.75). This produces a reproducible gate decision rather than a one-off threshold claim and makes the transfer conclusion more defensible for field use.
+The benchmark contribution remains important because the method depends on it. Public inline exports, public structural constraints, and pseudo-3D metrics make it possible to test whether a support-mapping method is merely producing large occupied regions or is actually delivering coherent and selective monitoring products. The constrained classical baseline illustrates this point clearly on p07: its raw support-volume score is respectable only because it occupies nearly the entire permitted trace set and still places a large fraction of support outside the benchmark proxy. Without the pseudo-3D benchmark, this failure mode would be harder to diagnose.
 
-The comparison with the other tested methods defines the scope of that contribution. The hybrid model does not outperform plain machine learning on the harder synthetic benchmark and remains weaker on the direct field benchmark. The layer-aware extension also fails to improve the field results. In addition, low-memory adaptation can fail catastrophically without explicit safeguards. These outcomes strengthen the study scientifically because they show that the benchmark can reject unsupported method hypotheses as well as identify effective ones. The present evidence therefore supports a benchmark-and-protocol contribution centered on structured support mapping for p10, an honest support-mapping comparison on p07, and a practical cross-benchmark operating protocol.
+The secondary wave-temporal gate study should be interpreted more narrowly. It shows that a separate comparator can require explicit operating-point control and adaptation sanity checks before deployment. That study does not carry the novelty of the paper on its own, but it does reinforce the broader argument that field-facing CO$_2$ monitoring claims should be benchmarked under explicit constraints and transfer rules.
 
 Several limitations remain. The field results are benchmark-constrained and should be interpreted as support mapping. The pseudo-3D benchmark is assembled from multiple inlines rather than from the full 3D field cube. The support-volume proxy is benchmark-derived and evaluates support occupancy rather than direct saturation. The synthetic benchmark is more demanding than the earlier version, but it still does not represent full site-scale coupled flow and wave physics. Even with these limitations, the study provides an open-data testbed for comparing field-facing CO$_2$ monitoring methods under shared constraints and shared metrics.
 
-These findings also have a practical implication for CCS monitoring. Open field evaluation benefits from metrics that reward spatial selectivity and crossline coherence in addition to section-wise agreement. In that setting, structured support reconstruction converts stable section-level probabilities into pseudo-3D support volumes that are easier to assess against public benchmark products and more interpretable as monitoring outputs.
+These findings also have a practical implication for CCS monitoring. Open field evaluation benefits from metrics that reward spatial selectivity, temporal consistency, and crossline coherence in addition to section-wise agreement. In that setting, benchmark-constrained temporal support inference converts stable section-level probabilities into pseudo-3D support volumes that are easier to audit against public benchmark products and more interpretable as monitoring outputs.
 
 \section{Conclusions}
 
-This paper introduced an open pseudo-3D benchmark and operating protocol for time-lapse CO$_2$ support mapping at Sleipner using eleven neighboring inlines, public benchmark constraints, and separate temporal and direct evaluation settings. The benchmark was used to compare constrained classical baselines, plain machine learning, hybrid machine learning, and deterministic support reconstruction stages.
+This paper introduced an open pseudo-3D Sleipner benchmark for time-lapse CO$_2$ monitoring and used it to test benchmark-constrained temporal support inference under separate temporal and direct evaluation settings. The benchmark was used to compare constrained classical baselines, plain machine learning, hybrid machine learning, non-temporal structured reconstruction, and the proposed temporal support inference stage.
 
-The main findings are straightforward. Plain machine learning is more stable than the hybrid model on the harder three-seed synthetic benchmark. Structured support reconstruction gives the strongest support-volume result on the direct p10 pseudo-3D benchmark and retains that ordering across three reused seed artifacts. On the p07 temporal benchmark, structured support reconstruction improves on plain machine learning and remains far more selective than the constrained classical baseline, but it does not overturn the classical baseline on raw support-volume IoU. The layer-aware extension does not improve the benchmark. A fixed-artifact cross-benchmark gate study further shows that wave-temporal deployment passes both p10 and p07 constrained-classical conditions only at quantiles 0.74 and 0.75, with 0.74 as the primary operating point, and that low-memory adaptation can collapse the field output if left unchecked. The strongest conclusion supported by the present results is therefore twofold: benchmark-constrained structured support mapping is a strong open p10 baseline and a more selective p07 support-mapping comparator, and explicit operating-point protocols are necessary for reproducible field transfer claims.
+The main findings are straightforward. Plain machine learning is more stable than the hybrid model on the harder three-seed synthetic benchmark. Benchmark-constrained temporal support inference gives the strongest support-volume result on the direct p10 pseudo-3D benchmark, increasing support-volume IoU to 0.771 in the main run and to $0.709 \pm 0.044$ across reused seed artifacts. On the p07 temporal benchmark, the same method raises support-volume IoU to 0.600 in the main run and to $0.587 \pm 0.025$ across reused seed artifacts, while retaining high trace-support overlap and crossline coherence. The layer-aware extension does not improve the benchmark. A secondary fixed-artifact gate study further shows that wave-temporal deployment passes both p10 and p07 constrained-classical conditions only at quantiles 0.74 and 0.75, and that low-memory adaptation can collapse the field output if left unchecked. The strongest conclusion supported by the present results is therefore that the open benchmark enables a reproducible field-facing method claim: temporal support inference materially improves pseudo-3D support mapping on both Sleipner benchmark branches.
 
 The most valuable next step is broader evaluation against additional practical baselines and, if possible, an extension from pseudo-3D support mapping toward more directly quantitative field products.
 
 \section*{Data and code availability}
 
-The field data used in this study are publicly available through the Sleipner 4D Seismic Dataset and the Sleipner 2019 Benchmark Model on CO2DataShare \citep{equinor2020seismic,equinor2020benchmark}. The code used to construct the benchmark, run the reported experiments, and generate the manuscript figures and tables is available from the repository associated with this study. The accompanying reproducibility materials include the synthetic seed sweep, the three-seed field-stability tables, and the cross-benchmark operating-point and adaptation-check tables used in the manuscript.
+The field data used in this study are publicly available through the Sleipner 4D Seismic Dataset and the Sleipner 2019 Benchmark Model on CO2DataShare \citep{equinor2020seismic,equinor2020benchmark}. The code used to construct the benchmark, run the reported experiments, and generate the manuscript figures and tables is available at \url{https://github.com/TallowCatch/Propagation}. The accompanying reproducibility materials in that repository include the synthetic seed sweep, the three-seed field-stability tables, and the cross-benchmark operating-point and adaptation-check tables used in the manuscript.
 
 \section*{Funding}
 

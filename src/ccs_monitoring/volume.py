@@ -45,6 +45,7 @@ def build_volume(config: dict[str, Any]) -> dict[str, Any]:
     plain_ml_constrained = np.full((inline_count, vintage_count, nt, nx), np.nan, dtype=np.float32)
     plain_ml_pseudo3d_constrained = np.full((inline_count, vintage_count, nt, nx), np.nan, dtype=np.float32)
     plain_ml_structured_constrained = np.full((inline_count, vintage_count, nt, nx), np.nan, dtype=np.float32)
+    plain_ml_temporal_structured_constrained = np.full((inline_count, vintage_count, nt, nx), np.nan, dtype=np.float32)
     plain_ml_layered_structured_constrained = np.full((inline_count, vintage_count, nt, nx), np.nan, dtype=np.float32)
     temporal_probability = np.full((inline_count, vintage_count, nt, nx), np.nan, dtype=np.float32)
     temporal_uncertainty = np.full((inline_count, vintage_count, nt, nx), np.nan, dtype=np.float32)
@@ -110,6 +111,9 @@ def build_volume(config: dict[str, Any]) -> dict[str, Any]:
         plain_ml_structured_constrained[inline_idx, vintage_idx] = entry["plain_ml_structured_constrained_binary"].astype(
             np.float32
         )
+        plain_ml_temporal_structured_constrained[inline_idx, vintage_idx] = entry[
+            "plain_ml_temporal_structured_constrained_binary"
+        ].astype(np.float32)
         plain_ml_layered_structured_constrained[inline_idx, vintage_idx] = entry[
             "plain_ml_layered_structured_constrained_binary"
         ].astype(np.float32)
@@ -202,6 +206,13 @@ def build_volume(config: dict[str, Any]) -> dict[str, Any]:
                 ("inline", "vintage", "sample", "trace"),
                 da.from_array(
                     plain_ml_structured_constrained,
+                    chunks=(inline_chunk, vintage_chunk, sample_chunk, trace_chunk),
+                ),
+            ),
+            "plain_ml_temporal_structured_constrained": (
+                ("inline", "vintage", "sample", "trace"),
+                da.from_array(
+                    plain_ml_temporal_structured_constrained,
                     chunks=(inline_chunk, vintage_chunk, sample_chunk, trace_chunk),
                 ),
             ),
