@@ -1,0 +1,21 @@
+{
+  "title": "Propagation: code and evidence for temporal support inference on an open pseudo-3D Sleipner benchmark",
+  "upload_type": "software",
+  "description": "Code, benchmark configuration, evidence tables, and manuscript assets for temporal support inference on an open pseudo-3D Sleipner benchmark.",
+  "creators": [
+    {
+      "name": "Alhashemi, Ameer",
+      "affiliation": "University of Birmingham"
+    }
+  ],
+  "keywords": [
+    "CO2 monitoring",
+    "time-lapse seismic",
+    "Sleipner",
+    "pseudo-3D benchmark",
+    "temporal support inference"
+  ],
+  "version": "jag-submission-2026-04-03",
+  "publication_date": "2026-04-03",
+  "access_right": "open"
+}

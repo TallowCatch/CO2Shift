@@ -16,17 +16,17 @@
 \providecommand*\caption@xref[2]{\@setref\relax\@undefined{#1}}
 \newlabel{fig:benchmarkdesign}{{1}{4}{Public pseudo-3D benchmark design and evaluation protocol. Panel A summarizes the public seismic and benchmark products used to derive structural constraints. Panel B defines the two benchmark tracks used in the study. Panel C shows how constrained classical baselines, plain machine learning, and temporal structured support inference are evaluated through pseudo-3D support outputs and field metrics}{figure.caption.1}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {2.3}Harder synthetic benchmark}{4}{subsection.2.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {3}Methods}{5}{section.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {3.1}Method overview}{5}{subsection.3.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {3}Methods}{4}{section.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.1}Method overview}{4}{subsection.3.1}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {3.2}Per-section methods}{5}{subsection.3.2}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {3.3}Benchmark-constrained structured reconstruction}{5}{subsection.3.3}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {3.4}Benchmark-constrained temporal support inference}{6}{subsection.3.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {3.5}Evaluation metrics}{7}{subsection.3.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.5}Evaluation metrics}{6}{subsection.3.5}\protected@file@percent }
 \@writefile{toc}{\contentsline {section}{\numberline {4}Experimental design}{7}{section.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {5}Results}{7}{section.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.1}Three-seed synthetic evaluation}{7}{subsection.5.1}\protected@file@percent }
 \@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Synthetic benchmark results. Classical results are deterministic. Machine learning results are reported as mean $\pm $ standard deviation across three seeds.}}{8}{table.caption.2}\protected@file@percent }
 \newlabel{tab:synthetic}{{1}{8}{Synthetic benchmark results. Classical results are deterministic. Machine learning results are reported as mean $\pm $ standard deviation across three seeds}{table.caption.2}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {5}Results}{8}{section.5}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.1}Three-seed synthetic evaluation}{8}{subsection.5.1}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {5.2}Direct eleven-inline benchmark}{8}{subsection.5.2}\protected@file@percent }
 \@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Direct eleven-inline p10 benchmark. The temporal support inference method yields the strongest support-volume result while preserving trace-support overlap and lateral support alignment.}}{9}{table.caption.3}\protected@file@percent }
 \newlabel{tab:direct}{{2}{9}{Direct eleven-inline p10 benchmark. The temporal support inference method yields the strongest support-volume result while preserving trace-support overlap and lateral support alignment}{table.caption.3}{}}
@@ -41,9 +41,11 @@
 \@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces Three-seed field stability check using the saved seed-11, seed-12, and seed-13 artifacts and no additional field training. Values are mean $\pm $ standard deviation across the three seed artifacts.}}{11}{table.caption.7}\protected@file@percent }
 \newlabel{tab:fieldstability}{{4}{11}{Three-seed field stability check using the saved seed-11, seed-12, and seed-13 artifacts and no additional field training. Values are mean $\pm $ standard deviation across the three seed artifacts}{table.caption.7}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {5.5}Secondary wave-temporal deployment sensitivity analysis}{11}{subsection.5.5}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {5}{\ignorespaces Cross-benchmark gate for wave-temporal deployment with fixed training artifacts and no field adaptation (three-seed means). Gate condition: p10 support-volume IoU $>$ constrained classical and p07 support-volume IoU $\geq $ constrained classical.}}{12}{table.caption.8}\protected@file@percent }
-\newlabel{tab:gate}{{5}{12}{Cross-benchmark gate for wave-temporal deployment with fixed training artifacts and no field adaptation (three-seed means). Gate condition: p10 support-volume IoU $>$ constrained classical and p07 support-volume IoU $\geq $ constrained classical}{table.caption.8}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces Quantitative summary of the three-seed field stability evaluation. Panel A shows mean $\pm $ standard deviation of support-volume intersection-over-union across the p07 and p10 benchmarks for the main field baselines. Panel B shows the p07 selectivity-performance trade-off between support-volume agreement and the fraction of predicted support outside the public support proxy. The temporal support inference method improves support-volume agreement while remaining far more selective than the constrained classical baseline.}}{12}{figure.caption.8}\protected@file@percent }
+\newlabel{fig:fieldsummary}{{4}{12}{Quantitative summary of the three-seed field stability evaluation. Panel A shows mean $\pm $ standard deviation of support-volume intersection-over-union across the p07 and p10 benchmarks for the main field baselines. Panel B shows the p07 selectivity-performance trade-off between support-volume agreement and the fraction of predicted support outside the public support proxy. The temporal support inference method improves support-volume agreement while remaining far more selective than the constrained classical baseline}{figure.caption.8}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {5.6}Negative results and false alarms}{12}{subsection.5.6}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {5}{\ignorespaces Cross-benchmark gate for wave-temporal deployment with fixed training artifacts and no field adaptation (three-seed means). Gate condition: p10 support-volume IoU $>$ constrained classical and p07 support-volume IoU $\geq $ constrained classical.}}{13}{table.caption.9}\protected@file@percent }
+\newlabel{tab:gate}{{5}{13}{Cross-benchmark gate for wave-temporal deployment with fixed training artifacts and no field adaptation (three-seed means). Gate condition: p10 support-volume IoU $>$ constrained classical and p07 support-volume IoU $\geq $ constrained classical}{table.caption.9}{}}
 \@writefile{toc}{\contentsline {section}{\numberline {6}Discussion}{13}{section.6}\protected@file@percent }
 \@writefile{toc}{\contentsline {section}{\numberline {7}Conclusions}{14}{section.7}\protected@file@percent }
 \citation{equinor2020seismic,equinor2020benchmark}
@@ -58,4 +60,4 @@
 \bibcite{romero2023joint}{{7}{2023}{{Romero et~al.}}{{Romero, Luiken, and Ravasi}}}
 \bibcite{equinor2020benchmark}{{8}{2020{}}{{SINTEF Industry and Equinor}}{{}}}
 \bibcite{equinor2020seismic}{{9}{2020{}}{{SINTEF Industry and Equinor}}{{}}}
-\gdef \@abspage@last{16}
+\gdef \@abspage@last{17}

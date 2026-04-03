@@ -48,10 +48,19 @@ def build_paper_evidence(config: dict[str, Any]) -> dict[str, Any]:
     field_stability_rows, field_stability_aggregate_rows = _build_field_stability_rows(paper_cfg, output_root)
     direct_panel_path = figures_dir / "paper_direct_2010_panel.png"
     temporal_panel_path = figures_dir / "p07_temporal_panel.png"
+    field_summary_panel_path = figures_dir / "paper_field_summary_panel.png"
+    field_summary_panel_pdf_path = figures_dir / "paper_field_summary_panel.pdf"
     _build_direct_panel(direct_config, direct_volume_summary, direct_panel_path)
     _build_temporal_panel(field_config, field_volume_summary, temporal_panel_path)
+    _build_field_summary_panel(
+        field_stability_aggregate_rows,
+        field_summary_panel_path,
+        pdf_destination=field_summary_panel_pdf_path,
+    )
     shutil.copyfile(direct_panel_path, paper_figures_dir / direct_panel_path.name)
     shutil.copyfile(temporal_panel_path, paper_figures_dir / temporal_panel_path.name)
+    shutil.copyfile(field_summary_panel_path, paper_figures_dir / field_summary_panel_path.name)
+    shutil.copyfile(field_summary_panel_pdf_path, paper_figures_dir / field_summary_panel_pdf_path.name)
 
     evidence_summary = {
         "claim": paper_cfg["claim"],
@@ -99,6 +108,8 @@ def build_paper_evidence(config: dict[str, Any]) -> dict[str, Any]:
         ),
         "panel_path": str(direct_panel_path),
         "temporal_panel_path": str(temporal_panel_path),
+        "field_summary_panel_path": str(field_summary_panel_path),
+        "field_summary_panel_pdf_path": str(field_summary_panel_pdf_path),
     }
 
     _write_json(results_dir / "paper_evidence_summary.json", evidence_summary)
@@ -421,6 +432,122 @@ def _build_temporal_panel(config: dict[str, Any], volume_summary: dict[str, Any]
         axis.axis("off")
     fig.tight_layout()
     fig.savefig(destination, dpi=180, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _build_field_summary_panel(
+    field_stability_aggregate_rows: list[dict[str, Any]],
+    destination: Path,
+    pdf_destination: Path | None = None,
+) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if pdf_destination is not None:
+        pdf_destination.parent.mkdir(parents=True, exist_ok=True)
+
+    methods = [
+        "best_classical_constrained",
+        "plain_ml_constrained",
+        "plain_ml_structured_constrained",
+        "plain_ml_temporal_structured_constrained",
+    ]
+    method_labels = {
+        "best_classical_constrained": "Classical",
+        "plain_ml_constrained": "Plain ML",
+        "plain_ml_structured_constrained": "Structured",
+        "plain_ml_temporal_structured_constrained": "Temporal structured",
+    }
+    benchmark_labels = {"p10": "p10", "p07": "p07"}
+    benchmark_styles = {
+        "p10": {"color": "black", "marker": "o", "linestyle": "-"},
+        "p07": {"color": "0.45", "marker": "s", "linestyle": "--"},
+    }
+    lookup = {
+        (str(row["benchmark"]), str(row["method"])): row for row in field_stability_aggregate_rows
+    }
+
+    fig, axes = plt.subplots(
+        1,
+        2,
+        figsize=(11.2, 4.6),
+        gridspec_kw={"width_ratios": [1.15, 1.0]},
+    )
+
+    x_positions = np.arange(len(methods), dtype=np.float64)
+    ax = axes[0]
+    for benchmark_name in ("p10", "p07"):
+        means = []
+        stds = []
+        for method_name in methods:
+            row = lookup[(benchmark_name, method_name)]
+            means.append(float(row["support_volume_iou_2010_mean"]))
+            stds.append(float(row["support_volume_iou_2010_std"]))
+        style = benchmark_styles[benchmark_name]
+        ax.errorbar(
+            x_positions,
+            means,
+            yerr=stds,
+            color=style["color"],
+            marker=style["marker"],
+            linestyle=style["linestyle"],
+            linewidth=1.6,
+            markersize=6.0,
+            capsize=3.0,
+            label=benchmark_labels[benchmark_name],
+        )
+    ax.set_xticks(x_positions, [method_labels[name] for name in methods], rotation=15, ha="right")
+    ax.set_ylabel("Support-volume IoU")
+    ax.set_ylim(0.2, 0.82)
+    ax.set_title("A. Three-seed field performance")
+    ax.grid(axis="y", color="0.88", linewidth=0.8)
+    ax.legend(frameon=False, loc="upper left")
+
+    ax = axes[1]
+    p07_offsets = {
+        "best_classical_constrained": (8, -10),
+        "plain_ml_constrained": (8, -12),
+        "plain_ml_structured_constrained": (8, 6),
+        "plain_ml_temporal_structured_constrained": (8, 6),
+    }
+    for method_name in methods:
+        row = lookup[("p07", method_name)]
+        x_value = float(row["predicted_fraction_outside_support_volume_mean"])
+        y_value = float(row["support_volume_iou_2010_mean"])
+        x_error = float(row["predicted_fraction_outside_support_volume_std"])
+        y_error = float(row["support_volume_iou_2010_std"])
+        marker = "o" if method_name == "plain_ml_temporal_structured_constrained" else "s"
+        facecolor = "black" if method_name == "plain_ml_temporal_structured_constrained" else "white"
+        ax.errorbar(
+            x_value,
+            y_value,
+            xerr=x_error,
+            yerr=y_error,
+            fmt=marker,
+            color="black",
+            markerfacecolor=facecolor,
+            markeredgecolor="black",
+            markersize=6.0,
+            elinewidth=1.2,
+            capsize=3.0,
+        )
+        ax.annotate(
+            method_labels[method_name],
+            (x_value, y_value),
+            textcoords="offset points",
+            xytext=p07_offsets[method_name],
+            ha="left",
+            fontsize=9,
+        )
+    ax.set_xlabel("Fraction outside support")
+    ax.set_ylabel("Support-volume IoU")
+    ax.set_xlim(-0.03, 0.55)
+    ax.set_ylim(0.2, 0.66)
+    ax.set_title("B. p07 selectivity-performance trade-off")
+    ax.grid(color="0.90", linewidth=0.8)
+
+    fig.tight_layout()
+    fig.savefig(destination, dpi=180, bbox_inches="tight")
+    if pdf_destination is not None:
+        fig.savefig(pdf_destination, bbox_inches="tight")
     plt.close(fig)
 
 

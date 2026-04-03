@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If you use this repository, please cite the frozen software snapshot below."
+title: "Propagation: code and evidence for temporal support inference on an open pseudo-3D Sleipner benchmark"
+type: software
+authors:
+  - family-names: "Alhashemi"
+    given-names: "Ameer"
+    affiliation: "University of Birmingham"
+    email: "ameeralhashemi.ah@gmail.com"
+version: "jag-submission-2026-04-03"
+date-released: 2026-04-03
+repository-code: "https://github.com/TallowCatch/Propagation"
+url: "https://github.com/TallowCatch/Propagation"
+keywords:
+  - "CO2 monitoring"
+  - "time-lapse seismic"
+  - "Sleipner"
+  - "pseudo-3D benchmark"
+  - "temporal support inference"
