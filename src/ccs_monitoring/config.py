@@ -150,15 +150,32 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "paper_evidence": {
         "enabled": False,
         "claim": (
-            "Benchmark-constrained hybrid monitoring yields more selective field change maps than plain ML and "
-            "stronger lateral plume-support alignment than classical difference-style baselines on public "
-            "Sleipner data, but its advantage weakens under stricter support-volume occupancy proxies."
+            "An open pseudo-3D Sleipner benchmark supports structured support mapping on p10, a more selective "
+            "p07 support-mapping comparison, and an explicit cross-benchmark operating protocol for field deployment."
         ),
         "synthetic_metrics_path": "",
         "field_summary_path": "",
         "direct_summary_path": "",
         "field_config_path": "",
         "direct_config_path": "",
+        "paper_results_dir": "paper/results",
+        "field_stability": {
+            "enabled": False,
+            "benchmark_configs": {},
+            "seed_runs": [],
+            "methods": [
+                "best_classical_constrained",
+                "plain_ml_constrained",
+                "plain_ml_structured_constrained",
+                "plain_ml_layered_structured_constrained",
+            ],
+            "metrics": [
+                "support_volume_iou_2010",
+                "trace_iou_with_2010_support",
+                "crossline_continuity",
+                "predicted_fraction_outside_support_volume",
+            ],
+        },
     },
     "seed_sweep": {
         "enabled": False,

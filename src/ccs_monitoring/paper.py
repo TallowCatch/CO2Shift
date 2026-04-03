@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import json
 import math
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -21,8 +22,10 @@ def build_paper_evidence(config: dict[str, Any]) -> dict[str, Any]:
     output_root = Path(config["output_root"])
     results_dir = output_root / "results"
     figures_dir = results_dir / "figures"
+    paper_results_dir = Path(config["paper_evidence"].get("paper_results_dir", "paper/results"))
     results_dir.mkdir(parents=True, exist_ok=True)
     figures_dir.mkdir(parents=True, exist_ok=True)
+    paper_results_dir.mkdir(parents=True, exist_ok=True)
 
     paper_cfg = config["paper_evidence"]
     synthetic_metrics = _load_json(paper_cfg["synthetic_metrics_path"])
@@ -38,6 +41,7 @@ def build_paper_evidence(config: dict[str, Any]) -> dict[str, Any]:
     field_rows = _build_field_rows(field_volume_summary)
     direct_rows = _build_direct_rows(direct_volume_summary)
     ablation_rows = _build_ablation_rows(field_volume_summary, direct_volume_summary)
+    field_stability_rows, field_stability_aggregate_rows = _build_field_stability_rows(paper_cfg, output_root)
     panel_path = figures_dir / "paper_direct_2010_panel.png"
     _build_direct_panel(direct_config, direct_volume_summary, panel_path)
 
@@ -52,12 +56,30 @@ def build_paper_evidence(config: dict[str, Any]) -> dict[str, Any]:
             "direct_summary_path": str(Path(paper_cfg["direct_summary_path"])),
             "field_config_path": str(Path(paper_cfg["field_config_path"])),
             "direct_config_path": str(Path(paper_cfg["direct_config_path"])),
+            "paper_results_dir": str(paper_results_dir),
+            "field_stability": {
+                "enabled": bool(paper_cfg.get("field_stability", {}).get("enabled", False)),
+                "benchmark_configs": {
+                    str(name): str(Path(path))
+                    for name, path in paper_cfg.get("field_stability", {}).get("benchmark_configs", {}).items()
+                },
+                "seed_runs": [
+                    {
+                        "seed": int(seed_run["seed"]),
+                        "artifacts_root": str(Path(seed_run["artifacts_root"])),
+                    }
+                    for seed_run in paper_cfg.get("field_stability", {}).get("seed_runs", [])
+                    if isinstance(seed_run, dict)
+                ],
+            },
         },
         "synthetic_rows": synthetic_rows,
         "field_rows": field_rows,
         "direct_rows": direct_rows,
         "ablation_rows": ablation_rows,
         "negative_control_rows": negative_control_rows,
+        "field_stability_rows": field_stability_rows,
+        "field_stability_aggregate_rows": field_stability_aggregate_rows,
         "synthetic_seed_summary": _build_seed_summary_rows(seed_sweep_summary),
         "methods_results_block": _build_methods_results_block(
             paper_cfg["claim"],
@@ -65,6 +87,7 @@ def build_paper_evidence(config: dict[str, Any]) -> dict[str, Any]:
             seed_sweep_summary,
             field_volume_summary,
             direct_volume_summary,
+            field_stability_aggregate_rows,
         ),
         "panel_path": str(panel_path),
     }
@@ -76,10 +99,15 @@ def build_paper_evidence(config: dict[str, Any]) -> dict[str, Any]:
     _write_csv(results_dir / "paper_ablation_table.csv", ablation_rows)
     _write_csv(results_dir / "paper_negative_controls.csv", negative_control_rows)
     _write_csv(results_dir / "paper_seed_sweep_table.csv", evidence_summary["synthetic_seed_summary"])
+    _write_csv(results_dir / "paper_field_stability_per_seed.csv", field_stability_rows)
+    _write_csv(results_dir / "paper_field_stability_aggregate.csv", field_stability_aggregate_rows)
     (results_dir / "methods_results_block.txt").write_text(
         evidence_summary["methods_results_block"],
         encoding="utf-8",
     )
+    _write_csv(paper_results_dir / "paper_field_stability_per_seed.csv", field_stability_rows)
+    _write_csv(paper_results_dir / "paper_field_stability_aggregate.csv", field_stability_aggregate_rows)
+    _write_json(paper_results_dir / "paper_evidence_summary.json", evidence_summary)
     return evidence_summary
 
 
@@ -347,12 +375,104 @@ def _build_direct_panel(config: dict[str, Any], volume_summary: dict[str, Any], 
     plt.close(fig)
 
 
+def _build_field_stability_rows(
+    paper_cfg: dict[str, Any],
+    output_root: Path,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    stability_cfg = paper_cfg.get("field_stability", {})
+    if not stability_cfg.get("enabled", False):
+        return [], []
+
+    benchmark_configs = stability_cfg.get("benchmark_configs", {})
+    seed_runs = stability_cfg.get("seed_runs", [])
+    methods = [str(method_name) for method_name in stability_cfg.get("methods", [])]
+    metrics = [str(metric_name) for metric_name in stability_cfg.get("metrics", [])]
+    if not benchmark_configs or not seed_runs or not methods or not metrics:
+        return [], []
+
+    from .pipeline import evaluate_field_only
+
+    per_seed_rows: list[dict[str, Any]] = []
+    for benchmark_name, config_path in benchmark_configs.items():
+        base_config = load_config(config_path)
+        for seed_run in seed_runs:
+            seed = int(seed_run["seed"])
+            artifacts_root = Path(seed_run["artifacts_root"])
+            run_config = deepcopy(base_config)
+            run_config["seed"] = seed
+            run_config["artifacts_root"] = str(artifacts_root)
+            run_config["output_root"] = str(output_root / "field_stability" / str(benchmark_name) / f"seed_{seed}")
+            run_config["config_path"] = str(Path(config_path).resolve())
+            summary_path = Path(run_config["output_root"]) / "results" / "summary.json"
+            if summary_path.exists():
+                summary_payload = _load_json(summary_path)
+                field_results = summary_payload.get("Field", {})
+            else:
+                field_results = evaluate_field_only(run_config)
+            overall_metrics = field_results.get("volume_summary", {}).get("overall", {})
+            for method_name in methods:
+                method_metrics = overall_metrics.get(method_name)
+                if not isinstance(method_metrics, dict):
+                    continue
+                row = {
+                    "benchmark": str(benchmark_name),
+                    "seed": seed,
+                    "method": method_name,
+                    "config_path": str(Path(config_path)),
+                    "artifacts_root": str(artifacts_root),
+                    "output_root": str(Path(run_config["output_root"])),
+                }
+                for metric_name in metrics:
+                    row[metric_name] = float(method_metrics.get(metric_name, float("nan")))
+                per_seed_rows.append(row)
+
+    aggregate_rows = _aggregate_field_stability_rows(per_seed_rows, metrics)
+    return per_seed_rows, aggregate_rows
+
+
+def _aggregate_field_stability_rows(
+    per_seed_rows: list[dict[str, Any]],
+    metrics: list[str],
+) -> list[dict[str, Any]]:
+    if not per_seed_rows:
+        return []
+
+    grouped_rows: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for row in per_seed_rows:
+        grouped_rows.setdefault((str(row["benchmark"]), str(row["method"])), []).append(row)
+
+    aggregate_rows: list[dict[str, Any]] = []
+    for benchmark_name, method_name in sorted(grouped_rows):
+        rows = grouped_rows[(benchmark_name, method_name)]
+        aggregate = {
+            "benchmark": benchmark_name,
+            "method": method_name,
+            "num_seeds": len(rows),
+        }
+        for metric_name in metrics:
+            values = np.asarray([float(row.get(metric_name, float("nan"))) for row in rows], dtype=np.float64)
+            finite_values = values[np.isfinite(values)]
+            if finite_values.size == 0:
+                aggregate[f"{metric_name}_mean"] = float("nan")
+                aggregate[f"{metric_name}_std"] = float("nan")
+                aggregate[f"{metric_name}_min"] = float("nan")
+                aggregate[f"{metric_name}_max"] = float("nan")
+                continue
+            aggregate[f"{metric_name}_mean"] = float(np.mean(finite_values))
+            aggregate[f"{metric_name}_std"] = float(np.std(finite_values))
+            aggregate[f"{metric_name}_min"] = float(np.min(finite_values))
+            aggregate[f"{metric_name}_max"] = float(np.max(finite_values))
+        aggregate_rows.append(aggregate)
+    return aggregate_rows
+
+
 def _build_methods_results_block(
     claim: str,
     synthetic_metrics: dict[str, Any],
     seed_sweep_summary: dict[str, Any] | None,
     field_volume_summary: dict[str, Any],
     direct_volume_summary: dict[str, Any],
+    field_stability_aggregate_rows: list[dict[str, Any]],
 ) -> str:
     classical_method = _synthetic_classical_method(synthetic_metrics)
     aggregate_lookup = _seed_aggregate_lookup(seed_sweep_summary)
@@ -368,6 +488,13 @@ def _build_methods_results_block(
     p10_layered = direct_volume_summary["overall"]["plain_ml_layered_structured_constrained"]
     p10_classical = direct_volume_summary["overall"]["best_classical_constrained"]
     p10_hybrid = direct_volume_summary["overall"]["hybrid_ml_constrained"]
+    stability_lookup = {
+        (str(row["benchmark"]), str(row["method"])): row for row in field_stability_aggregate_rows
+    }
+    p07_structured_stability = stability_lookup.get(("p07", "plain_ml_structured_constrained"))
+    p10_structured_stability = stability_lookup.get(("p10", "plain_ml_structured_constrained"))
+    p07_plain_stability = stability_lookup.get(("p07", "plain_ml_constrained"))
+    p10_plain_stability = stability_lookup.get(("p10", "plain_ml_constrained"))
     if ood_plain and ood_hybrid and test_plain and test_hybrid:
         synthetic_text = (
             f"Across a three-seed sweep on the harder benchmark-v2 synthetic task, plain ML reaches mean Dice "
@@ -385,6 +512,24 @@ def _build_methods_results_block(
             f"{synthetic_metrics['ood']['plain_ml']['dice']:.3f}, the hybrid model reaches "
             f"{synthetic_metrics['ood']['hybrid_ml']['dice']:.3f}, and the strongest classical synthetic baseline "
             f"({classical_method}) reaches {synthetic_metrics['ood'][classical_method]['dice']:.3f}."
+        )
+    stability_text = ""
+    if (
+        p07_structured_stability
+        and p10_structured_stability
+        and p07_plain_stability
+        and p10_plain_stability
+    ):
+        stability_text = (
+            "Across the reused three-seed field evaluation, structured plain ML remains the strongest support-"
+            f"mapping variant on p10 with support-volume IoU {p10_structured_stability['support_volume_iou_2010_mean']:.3f} "
+            f"± {p10_structured_stability['support_volume_iou_2010_std']:.3f}, compared with "
+            f"{p10_plain_stability['support_volume_iou_2010_mean']:.3f} ± {p10_plain_stability['support_volume_iou_2010_std']:.3f} "
+            "for plain ML alone. On p07, structured plain ML remains stronger than plain ML on support-volume IoU "
+            f"({p07_structured_stability['support_volume_iou_2010_mean']:.3f} ± {p07_structured_stability['support_volume_iou_2010_std']:.3f} "
+            f"versus {p07_plain_stability['support_volume_iou_2010_mean']:.3f} ± {p07_plain_stability['support_volume_iou_2010_std']:.3f}), "
+            "while the benchmark-constrained classical baseline still retains the highest raw p07 support-volume IoU. "
+            "This stability check therefore supports a benchmark/protocol claim rather than a blanket classical-beating claim."
         )
     return (
         f"Claim: {claim}\n\n"
@@ -410,7 +555,9 @@ def _build_methods_results_block(
         f"{p10_classical['support_volume_iou_2010']:.3f} support-volume IoU. "
         f"The hybrid field outputs remain weaker on the direct benchmark "
         f"({p10_hybrid['support_volume_iou_2010']:.3f} support-volume IoU), so the current defensible field claim "
-        "should center on plain ML plus structured support reconstruction. The layered extension is therefore a "
+        "should center on plain ML plus structured support reconstruction. "
+        f"{stability_text} "
+        "The layered extension is therefore a "
         "tested negative result, not the current field method of record."
     )
 

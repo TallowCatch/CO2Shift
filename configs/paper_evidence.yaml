@@ -3,13 +3,36 @@ output_root: runs/paper_evidence
 
 paper_evidence:
   enabled: true
-  claim: "On a public 11-inline pseudo-3D Sleipner benchmark, benchmark-constrained plain ML with structured support reconstruction yields stronger support-volume maps than constrained classical baselines and plain per-section ML alone, while preserving strong lateral support alignment."
+  claim: "An open pseudo-3D Sleipner benchmark supports structured support mapping on p10, a more selective p07 support-mapping comparison, and an explicit cross-benchmark operating protocol for field deployment."
+  paper_results_dir: paper/results
   synthetic_metrics_path: runs/paper_proto/results/metrics.json
   seed_sweep_summary_path: runs/paper_proto_seed_sweep/results/seed_sweep_summary.json
   field_summary_path: runs/sleipner_p07_11inline/results/volume_manifest.json
   direct_summary_path: runs/sleipner_p10_11inline/results/volume_manifest.json
   field_config_path: configs/sleipner_p07_11inline_volume.yaml
   direct_config_path: configs/sleipner_p10_11inline_volume.yaml
+  field_stability:
+    enabled: true
+    benchmark_configs:
+      p07: configs/sleipner_p07_11inline.yaml
+      p10: configs/sleipner_p10_11inline.yaml
+    seed_runs:
+      - seed: 11
+        artifacts_root: runs/paper_proto_seed_sweep/seed_11
+      - seed: 12
+        artifacts_root: runs/paper_proto_seed_sweep/seed_12
+      - seed: 13
+        artifacts_root: runs/paper_proto_seed_sweep/seed_13
+    methods:
+      - best_classical_constrained
+      - plain_ml_constrained
+      - plain_ml_structured_constrained
+      - plain_ml_layered_structured_constrained
+    metrics:
+      - support_volume_iou_2010
+      - trace_iou_with_2010_support
+      - crossline_continuity
+      - predicted_fraction_outside_support_volume
 
 report:
   title: "CO2Shift paper evidence pack"
